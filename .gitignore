@@ -1,0 +1,9 @@
+*.o
+*.dep
+*.elf
+*.map
+*.ps-exe
+*.cue
+/build/
+/dialtone.bin
+*.blend1

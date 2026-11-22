@@ -1,0 +1,69 @@
+{
+    "executable": "dialtone.ps-exe",
+    "pvd": {
+        "system_id": "PLAYSTATION",
+        "volume_id": "DIALTONE",
+        "volume_set_id": "DIALTONE",
+        "publisher": "RIX",
+        "preparer": "RIX",
+        "application_id": "PLAYSTATION"
+    },
+    "files": [
+        {
+            "path": "assets/MODELS/AUTODIAL.MB",
+            "name": "MODELS/AUTODIAL.MB"
+        },
+        {
+            "path": "assets/MODELS/DESK.MB",
+            "name": "MODELS/DESK.MB"
+        },
+        {
+            "path": "assets/MODELS/HANDSET.MB",
+            "name": "MODELS/HANDSET.MB"
+        },
+        {
+            "path": "assets/MODELS/KEY.MB",
+            "name": "MODELS/KEY.MB"
+        },
+        {
+            "path": "assets/MODELS/KEYLIT.MB",
+            "name": "MODELS/KEYLIT.MB"
+        },
+        {
+            "path": "assets/MODELS/KEYSEL.MB",
+            "name": "MODELS/KEYSEL.MB"
+        },
+        {
+            "path": "assets/MODELS/LAMP.MB",
+            "name": "MODELS/LAMP.MB"
+        },
+        {
+            "path": "assets/MODELS/LAMPLIT.MB",
+            "name": "MODELS/LAMPLIT.MB"
+        },
+        {
+            "path": "assets/MODELS/MUG.MB",
+            "name": "MODELS/MUG.MB"
+        },
+        {
+            "path": "assets/MODELS/NEEDLE.MB",
+            "name": "MODELS/NEEDLE.MB"
+        },
+        {
+            "path": "assets/MODELS/PHONE.MB",
+            "name": "MODELS/PHONE.MB"
+        },
+        {
+            "path": "assets/MODELS/PHONE2.MB",
+            "name": "MODELS/PHONE2.MB"
+        },
+        {
+            "path": "assets/MODELS/RADIO.MB",
+            "name": "MODELS/RADIO.MB"
+        },
+        {
+            "path": "assets/MODELS/REDIAL.MB",
+            "name": "MODELS/REDIAL.MB"
+        }
+    ]
+}
