@@ -20,12 +20,18 @@ static uint16_t PitchFor(uint16_t frequency) {
 }
 
 void Tones::Init(void) {
-	// filter 0, shift 1: each nibble lands as nibble << 11
-	alignas(4) uint8_t block[psyqo::SPU::ADPCM_BLOCK_SIZE];
-	block[0] = 0x01;
-	block[1] = 0x07; // loop start + loop end + repeat: the block loops onto itself
-	for (uint8_t i = 0; i < SAMPLES_PER_PERIOD; i += 2) {
-		block[2 + i / 2] = (c_sine[i] & 0xf) | ((c_sine[i + 1] & 0xf) << 4);
+	// Two blocks of one sine period each, filter 0, shift 1 (each nibble lands as nibble << 11).
+	// The first carries loop start, the second end + repeat (flag byte exactly 3), so the voice
+	// loops over both. A single block flagged 0x07 plays once and mutes in Redux, which only
+	// repeats on an end block whose flag byte is 3.
+	alignas(4) uint8_t block[2 * psyqo::SPU::ADPCM_BLOCK_SIZE];
+	for (uint8_t b = 0; b < 2; b++) {
+		uint8_t* p = block + b * psyqo::SPU::ADPCM_BLOCK_SIZE;
+		p[0] = 0x01;
+		p[1] = b == 0 ? 0x04 : 0x03;
+		for (uint8_t i = 0; i < SAMPLES_PER_PERIOD; i += 2) {
+			p[2 + i / 2] = (c_sine[i] & 0xf) | ((c_sine[i + 1] & 0xf) << 4);
+		}
 	}
 	psyqo::SPU::dmaWrite(TONE_SPU_ADDR, block, sizeof(block));
 
