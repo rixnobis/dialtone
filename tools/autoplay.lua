@@ -21,9 +21,17 @@ for _ = 1, 4 do
   for _, b in ipairs({ 'Tri', 'Square', 'Tri', 'Square', 'Select' }) do table.insert(plan, b) end
 end
 
--- BUY_ONLY=1: press Square a few times, then leave the pad alone (the autodialer test)
+-- BUY_ONLY=1: buy the desk items and autodialer levels, then leave the pad alone (the autodialer test)
 local buyOnly = os.getenv('BUY_ONLY') == '1'
-if buyOnly then plan = { 'Square' } end
+-- shop: 1 the next desk item, 2 the autodialer, then the stats
+if buyOnly then plan = { 'Square', 'Square', 'Select', 'Square', 'Square', 'Square', 'Square', 'Square' } end
+
+-- SEQ="400:Start,430:Cross": press these buttons at these vsyncs (held 6 frames); NOPLAN=1 turns
+-- the dialing plan off so only SEQ touches the pad
+local seq = {}
+for v, b in string.gmatch(os.getenv('SEQ') or '', '(%d+):(%a+%d?)') do seq[tonumber(v)] = b end
+local noPlan = os.getenv('NOPLAN') == '1'
+local seqHeld = {}
 
 local n, step, held = 0, 1, nil
 listener = PCSX.Events.createEventListener('GPU::Vsync', function()
@@ -31,7 +39,9 @@ listener = PCSX.Events.createEventListener('GPU::Vsync', function()
   local pad = PCSX.SIO0.slots[1].pads[1]
   -- START dismisses the how-to-play card
   if n == 100 then pad.setOverride(B.Start) elseif n == 106 then pad.clearOverride(B.Start) end
-  if n > 120 and n % 10 == 0 and not (buyOnly and n > 300) then
+  if seq[n] then pad.setOverride(B[seq[n]]); seqHeld[n + 6] = seq[n]; print('PRESS ' .. n .. ' ' .. seq[n]) end
+  if seqHeld[n] then pad.clearOverride(B[seqHeld[n]]); seqHeld[n] = nil end
+  if n > 120 and n % 10 == 0 and not (buyOnly and n > 600) and not noPlan then
     if held then pad.clearOverride(B[held]); held = nil
     else
       held = plan[step]

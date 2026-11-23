@@ -1,5 +1,6 @@
 #pragma once
 
+#include "save.hh"
 #include "sim.hh"
 #include "tones.hh"
 
@@ -36,6 +37,11 @@ class PhoneScene final : public psyqo::Scene, public SimListener {
 	void UpdateText(void);
 	void DrawBand(int16_t y, int16_t h, psyqo::Color colour);
 	void UpdateIntro(void);
+	void UpdateMenu(void);
+	void HandleMenuButton(psyqo::AdvancedPad::Button button);
+	void ClearOverlay(void);
+	void RemoveDeskUpgrades(void);
+	void TickClock(void);
 	void UpdateLineRow(uint8_t index);
 	void SetRow(uint8_t row, psyqo::Color colour, const char* fmt, ...);
 	void SetMeshIfChanged(GameObject* object, uint8_t& current, uint8_t wanted, const char* const* meshes);
@@ -76,8 +82,19 @@ class PhoneScene final : public psyqo::Scene, public SimListener {
 	char m_toast[40] = {0};
 
 	bool m_intro = true;		// the how-to-play card, until X or START
-	uint32_t m_shownCash = 0;	// counts up towards the real cash
+	BigNum m_shownCash;			// counts up towards the real cash
 	uint16_t m_bannerTimer = 0; // the middle banner: on air or a win
 	uint8_t m_bannerLine = 0;
 	bool m_wasOnAir[MAX_LINES] = {false};
+
+	// the Reputation screen (START): new area code and the perks
+	bool m_menu = false;
+	uint8_t m_menuSel = 0;
+	bool m_menuArmed = false; // the new area code wants a second X
+
+	SaveGame m_save;
+	uint32_t m_playSeconds = 0; // from the GPU frame counter, never now(): that wraps after 71 minutes
+	uint32_t m_lastFrame = 0;
+	uint32_t m_frameAcc = 0;
+	uint32_t m_nextSaveAt = 0;
 };

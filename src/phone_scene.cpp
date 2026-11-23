@@ -55,6 +55,10 @@ static constexpr int16_t c_rowY[ROW_INTRO] = {4, 20, 36, 52, 160, 176, 192, 208,
 
 static constexpr int16_t TOP_BAND_H = 70, BOTTOM_BAND_Y = 156, BANNER_Y = 92, BANNER_H = 42;
 static constexpr uint16_t WIN_BANNER_TICKS = 150;
+// the card has the pad bus to itself while it writes (about 3 s in Redux), so the autosave waits for
+// the break between contests once it is due
+static constexpr uint16_t AUTOSAVE_SECONDS = 120;
+static constexpr uint8_t MENU_ENTRIES = 1 + uint8_t(Perk::Count); // the move, then the perks
 
 static constexpr const char* c_intro[INTRO_ROWS] = {
 	"         HOW TO PLAY DIALTONE",
@@ -67,7 +71,7 @@ static constexpr const char* c_intro[INTRO_ROWS] = {
 	"",
 	"D-pad + X  dial a key     O  hang up",
 	"SELECT  pick shop item  SQUARE  buy",
-	"Later: TRIANGLE redial, L1/R1 tune",
+	"Later: TRI redial L1/R1 tune START rep",
 	"",
 	"         press X to start",
 };
@@ -82,6 +86,27 @@ static void FormatNumber(char* out, const char* digits, uint8_t count) {
 		out[o++] = i < count ? digits[i] : '_';
 	}
 	out[o] = 0;
+}
+
+// "x1.21" for small factors, "x4096", then "x1.23e7"
+static void FormatFactor(char* out, const BigNum& factor) {
+	*out++ = 'x';
+	if (factor < BigNum::FromUint(100)) {
+		uint32_t hundredths = (factor * BigNum::FromUint(100)).ToUint();
+		snprintf(out, 12, "%d.%02d", hundredths / 100, hundredths % 100);
+	} else {
+		factor.Format(out);
+	}
+}
+
+// the first word of a station name, "KNAT 96.1" -> "KNAT"
+static void ShortName(char* out, const char* name) {
+	uint8_t i = 0;
+	while (name[i] && name[i] != ' ' && i < 5) {
+		out[i] = name[i];
+		i++;
+	}
+	out[i] = 0;
 }
 
 static GameObject* Place(const char* name, const char* mesh, const psyqo::Vec3& pos) {
@@ -125,6 +150,30 @@ void PhoneScene::start(StartReason reason) {
 	g_madnightEngine.m_rand.seed(g_madnightEngine.gpu().now());
 	m_tones.Init();
 	m_sim.Init(&g_madnightEngine.m_rand, this);
+
+	// a missing or bad card is reported once and then the game plays unsaved
+	auto status = m_save.Load(m_sim, m_playSeconds);
+	m_shownCash = m_sim.Cash();
+	switch (status) {
+		case SaveGame::Status::Loaded:
+			snprintf(m_toast, sizeof(m_toast), "Welcome back! Save loaded.");
+			break;
+		case SaveGame::Status::Fresh:
+			snprintf(m_toast, sizeof(m_toast), "New game, saving to card 1");
+			break;
+		case SaveGame::Status::Corrupt:
+			snprintf(m_toast, sizeof(m_toast), "Save damaged: starting over");
+			break;
+		case SaveGame::Status::Unformatted:
+			snprintf(m_toast, sizeof(m_toast), "Card 1 unformatted: not saving");
+			break;
+		default:
+			snprintf(m_toast, sizeof(m_toast), "No memory card: not saving");
+			break;
+	}
+	m_toastTimer = 240;
+	m_lastFrame = g_madnightEngine.gpu().getFrameCount();
+	m_nextSaveAt = m_playSeconds + AUTOSAVE_SECONDS;
 	printf("DIALTONE: ready\n");
 }
 
@@ -180,8 +229,11 @@ void PhoneScene::UpdateDesk(void) {
 	}
 
 	if (m_needle && m_needleStation != m_sim.StationIndex()) {
+		// the layout gives the two ends of the dial, the stations sit evenly between them
 		m_needleStation = m_sim.StationIndex();
-		m_needle->SetPosition(desk::NEEDLE[m_needleStation]);
+		psyqo::Vec3 pos = desk::NEEDLE[0];
+		pos.x += (desk::NEEDLE[1].x - desk::NEEDLE[0].x) * int32_t(m_needleStation) / int32_t(STATION_COUNT - 1);
+		m_needle->SetPosition(pos);
 	}
 
 	bool onAir = m_sim.IsRoundOpen() && !(m_sim.SecondsLeft() <= 5 && blink);
@@ -195,7 +247,7 @@ void PhoneScene::UpdateDesk(void) {
 		m_phone2 = Place("phone2", "MODELS/PHONE2.MB", {0, 0, 0});
 		m_lampLine2 = Place("lamp_line2", c_lampMeshes[0], desk::LAMP_LINE2);
 	}
-	if (m_sim.HasUpgrade(Upgrade::Autodialer) && !m_autodial) {
+	if (m_sim.HasAutodialer() && !m_autodial) {
 		m_autodial = Place("autodial", "MODELS/AUTODIAL.MB", {0, 0, 0});
 		m_lampAuto = Place("lamp_auto", c_lampMeshes[0], desk::LAMP_AUTO);
 	}
@@ -212,16 +264,90 @@ void PhoneScene::UpdateDesk(void) {
 	SetMeshIfChanged(m_lampAuto, m_lampAutoMesh, autoBusy && (m_flashTimer & 4) ? 1 : 0, c_lampMeshes);
 }
 
+void PhoneScene::RemoveDeskUpgrades(void) {
+	auto& objects = g_madnightEngine.m_gameObjectManager;
+	for (GameObject** object : {&m_redial, &m_phone2, &m_lampLine2, &m_autodial, &m_lampAuto}) {
+		if (*object) {
+			objects.DestroyGameObject(*object);
+			*object = nullptr;
+		}
+	}
+	m_lampLine2Mesh = m_lampAutoMesh = 0;
+}
+
+void PhoneScene::ClearOverlay(void) {
+	for (uint8_t i = 0; i < INTRO_ROWS; i++) {
+		m_rows[ROW_INTRO + i]->SetDisplayText("");
+	}
+}
+
+void PhoneScene::HandleMenuButton(psyqo::AdvancedPad::Button button) {
+	using Button = psyqo::AdvancedPad::Button;
+	switch (button) {
+		case Button::Up:
+			m_menuSel = (m_menuSel + MENU_ENTRIES - 1) % MENU_ENTRIES;
+			m_menuArmed = false;
+			break;
+		case Button::Down:
+			m_menuSel = (m_menuSel + 1) % MENU_ENTRIES;
+			m_menuArmed = false;
+			break;
+		case Button::Start:
+		case Button::Circle:
+			m_menu = false;
+			m_menuArmed = false;
+			ClearOverlay();
+			printf("DIALTONE: menu closed\n");
+			break;
+		case Button::Cross:
+			if (m_menuSel == 0) {
+				if (m_sim.PendingRep().IsZero()) {
+					break;
+				}
+				if (!m_menuArmed) {
+					m_menuArmed = true;
+					break;
+				}
+				char gain[12];
+				m_sim.PendingRep().Format(gain);
+				m_sim.NewAreaCode();
+				RemoveDeskUpgrades();
+				m_shownCash = m_sim.Cash();
+				m_bannerTimer = 0;
+				m_menuArmed = false;
+				char rep[12];
+				m_sim.Reputation().Format(rep);
+				printf("DIALTONE: new area code #%d +%s rep, rep=%s\n", m_sim.AreaCodes(), gain, rep);
+				m_save.Save(m_sim, m_playSeconds);
+				m_nextSaveAt = m_playSeconds + AUTOSAVE_SECONDS;
+			} else {
+				Perk perk = Perk(m_menuSel - 1);
+				if (m_sim.BuyPerk(perk)) {
+					m_nextSaveAt = m_playSeconds; // due now, written at the next break between contests
+					char rep[12];
+					m_sim.Reputation().Format(rep);
+					printf("DIALTONE: perk %s lv%d rep=%s\n", Sim::c_perks[uint8_t(perk)].name, m_sim.PerkLevel(perk),
+						   rep);
+				}
+			}
+			break;
+		default:
+			break;
+	}
+}
+
 void PhoneScene::HandleButton(psyqo::AdvancedPad::Button button) {
 	using Button = psyqo::AdvancedPad::Button;
 	if (m_intro) {
 		if (button == Button::Cross || button == Button::Start) {
 			m_intro = false;
-			for (uint8_t i = 0; i < INTRO_ROWS; i++) {
-				m_rows[ROW_INTRO + i]->SetDisplayText("");
-			}
+			ClearOverlay();
 			printf("DIALTONE: intro dismissed\n");
 		}
+		return;
+	}
+	if (m_menu) {
+		HandleMenuButton(button);
 		return;
 	}
 	switch (button) {
@@ -258,6 +384,12 @@ void PhoneScene::HandleButton(psyqo::AdvancedPad::Button button) {
 		case Button::R1:
 			m_sim.TuneStation(1);
 			break;
+		case Button::Start:
+			m_menu = true;
+			m_menuSel = 0;
+			m_menuArmed = false;
+			printf("DIALTONE: menu opened\n");
+			break;
 		default:
 			break;
 	}
@@ -270,14 +402,28 @@ bool PhoneScene::BuyShopItem(void) {
 			return false;
 		}
 		snprintf(m_toast, sizeof(m_toast), "Bought: %s!", Sim::c_upgrades[next].name);
-		printf("DIALTONE: bought %s cash=%d\n", Sim::c_upgrades[next].name, m_sim.Cash());
+		char cash[12];
+		m_sim.Cash().Format(cash);
+		printf("DIALTONE: bought %s cash=%s\n", Sim::c_upgrades[next].name, cash);
 	} else {
 		Stat stat = Stat(m_shopSel - 1);
 		if (!m_sim.BuyStat(stat)) {
 			return false;
 		}
-		uint8_t level = m_sim.StatLevel(stat);
+		uint16_t level = m_sim.StatLevel(stat);
+		char factor[16];
+		FormatFactor(factor, m_sim.PrizeMultiplier());
 		switch (stat) {
+			case Stat::Autodialer:
+				if (m_sim.AutodialWindow()) {
+					snprintf(m_toast, sizeof(m_toast), "Autodialer %d: dials %d before the winner", level,
+							 m_sim.AutodialWindow());
+				} else {
+					snprintf(m_toast, sizeof(m_toast), "Autodialer %d: %d line%s, waits %ds", level,
+							 m_sim.AutodialLines(), m_sim.AutodialLines() > 1 ? "s" : "",
+							 m_sim.AutodialIdleTicks() / TICKS_PER_SECOND);
+				}
+				break;
 			case Stat::QuickFingers:
 				snprintf(m_toast, sizeof(m_toast), "Quick fingers %d: dialing is faster", level);
 				break;
@@ -285,13 +431,15 @@ bool PhoneScene::BuyShopItem(void) {
 				snprintf(m_toast, sizeof(m_toast), "Luck %d: busy %d%% of the time", level, m_sim.BusyPercent());
 				break;
 			default:
-				snprintf(m_toast, sizeof(m_toast), "Charm %d: prizes +%d%%, $%d a call", level,
-						 m_sim.PrizePercent() - 100, m_sim.Consolation());
+				snprintf(m_toast, sizeof(m_toast), "Charm %d: prizes %s", level, factor);
 				break;
 		}
-		printf("DIALTONE: bought %s lv%d cash=%d digit=%d connect=%d busy=%d%% prize=%d%% consolation=%d\n",
-			   Sim::c_stats[uint8_t(stat)].name, level, m_sim.Cash(), m_sim.AutoDigitTicks(), m_sim.ConnectTicks(),
-			   m_sim.BusyPercent(), m_sim.PrizePercent(), m_sim.Consolation());
+		char cash[12], price[12];
+		m_sim.Cash().Format(cash);
+		m_sim.StatPrice(stat).Format(price);
+		printf("DIALTONE: bought %s lv%d cash=%s next=%s digit=%d connect=%d busy=%d%% prize=%s auto=%d/%d/%d\n",
+			   Sim::c_stats[uint8_t(stat)].name, level, cash, price, m_sim.AutoDigitTicks(), m_sim.ConnectTicks(),
+			   m_sim.BusyPercent(), factor, m_sim.AutodialLines(), m_sim.AutodialIdleTicks(), m_sim.AutodialDigitTicks());
 	}
 	m_toastTimer = 120;
 	return true;
@@ -310,7 +458,10 @@ void PhoneScene::OnWin(uint8_t line) {
 	m_tones.Win();
 	m_bannerTimer = WIN_BANNER_TICKS;
 	m_bannerLine = line;
-	printf("DIALTONE: win cash=%d wins=%d\n", m_sim.Cash(), m_sim.Wins());
+	char cash[12], all[12];
+	m_sim.Cash().Format(cash);
+	m_sim.AllTimeEarned().Format(all);
+	printf("DIALTONE: win cash=%s wins=%d alltime=%s\n", cash, m_sim.Wins(), all);
 }
 
 void PhoneScene::SetRow(uint8_t row, psyqo::Color colour, const char* fmt, ...) {
@@ -371,7 +522,9 @@ void PhoneScene::UpdateLineRow(uint8_t index) {
 						   line.callerTarget);
 					break;
 				case Outcome::Won:
-					SetRow(row, c_amber, "LINE %d  you were #%d: won $%d", index + 1, line.callerNumber, line.prizeWon);
+					char won[12];
+					line.prizeWon.Format(won);
+					SetRow(row, c_amber, "LINE %d  you were #%d: won $%s", index + 1, line.callerNumber, won);
 					break;
 				default:
 					SetRow(row, c_white, "LINE %d  free%s", index + 1,
@@ -413,24 +566,38 @@ void PhoneScene::UpdateText(void) {
 	const auto& station = m_sim.CurrentStation();
 	char number[12];
 
-	if (!m_sim.IsStationUnlocked(1)) {
-		// the next goal sits up here so the shop row below is never shared
-		SetRow(ROW_TITLE, c_amber, "DIALTONE $%-6d  WHOT opens $%d/$%d", m_shownCash, m_sim.Lifetime(),
-			   Sim::c_stations[1].unlockAt);
+	// the next goal sits up here so the shop row below is never shared
+	char cash[12], goal[12], target[12], name[6];
+	m_shownCash.Format(cash);
+	int8_t locked = m_sim.NextLockedStation();
+	BigNum pending = m_sim.PendingRep();
+	if (locked >= 0) {
+		const auto& next = Sim::c_stations[locked];
+		ShortName(name, next.name);
+		m_sim.RunEarned().Format(goal);
+		BigNum::FromUint(next.unlockAt).Format(target);
+		SetRow(ROW_TITLE, c_amber, "DIALTONE $%-7s %s at $%s/$%s", cash, name, goal, target);
+	} else if (!pending.IsZero()) {
+		pending.Format(goal);
+		SetRow(ROW_TITLE, (m_flashTimer & 32) ? c_amber : c_green, "DIALTONE $%-7s START: +%s rep", cash, goal);
 	} else {
-		SetRow(ROW_TITLE, c_amber, "DIALTONE                     $%7d", m_shownCash);
+		SetRow(ROW_TITLE, c_amber, "DIALTONE                 $%s", cash);
 	}
 
 	FormatNumber(number, station.number, NUMBER_LENGTH);
 	SetRow(ROW_STATION, c_white, "RADIO %-12s CALL %s", station.name, number);
-	SetRow(ROW_DJ, c_green, "DJ: \"%s\"", m_sim.DJLine());
+	// the DJ speaks in quotes; no "DJ:" label, a six-digit prize needs the room
+	SetRow(ROW_DJ, c_green, "\"%s\"", m_sim.DJLine());
 
 	if (m_sim.IsRoundOpen()) {
 		bool hurry = m_sim.SecondsLeft() <= 5 && (m_flashTimer & 16);
-		SetRow(ROW_ROUND, hurry ? c_red : c_white, "WANTS #%-2d SO FAR %-2d  $%-5d %2ds", m_sim.CallerTarget(),
-			   m_sim.CallersSoFar(), m_sim.Prize(), m_sim.SecondsLeft());
+		char prize[12];
+		m_sim.Prize().Format(prize);
+		SetRow(ROW_ROUND, hurry ? c_red : c_white, "WANTS #%-2d SO FAR %-2d  $%-7s %2ds", m_sim.CallerTarget(),
+			   m_sim.CallersSoFar(), prize, m_sim.SecondsLeft());
 	} else {
-		SetRow(ROW_ROUND, c_grey, "Contest closed, next in %ds", m_sim.SecondsLeft());
+		SetRow(ROW_ROUND, c_grey, "Contest closed, next in %ds%s", m_sim.SecondsLeft(),
+			   m_save.Writing() ? "  SAVING" : "");
 	}
 
 	for (uint8_t i = 0; i < MAX_LINES; i++) {
@@ -443,26 +610,29 @@ void PhoneScene::UpdateText(void) {
 			SetRow(ROW_SHOP, c_grey, "SHOP %d/%d desk complete", 1, SHOP_ENTRIES);
 		} else {
 			const auto& upgrade = Sim::c_upgrades[next];
-			bool afford = m_sim.Cash() >= upgrade.price;
-			SetRow(ROW_SHOP, afford ? c_amber : c_grey, "SHOP %d/%d %-13s $%-4d", 1, SHOP_ENTRIES, upgrade.name,
+			bool afford = m_sim.Cash() >= BigNum::FromUint(upgrade.price);
+			SetRow(ROW_SHOP, afford ? c_amber : c_grey, "SHOP %d/%d %-13s $%d", 1, SHOP_ENTRIES, upgrade.name,
 				   upgrade.price);
 		}
 	} else {
 		Stat stat = Stat(m_shopSel - 1);
-		uint32_t price = m_sim.StatPrice(stat);
+		BigNum price = m_sim.StatPrice(stat);
 		const char* name = Sim::c_stats[uint8_t(stat)].name;
-		if (price == 0) {
-			SetRow(ROW_SHOP, c_grey, "SHOP %d/%d %-13s Lv%d MAX", m_shopSel + 1, SHOP_ENTRIES, name, STAT_MAX_LEVEL);
+		if (price.IsZero()) {
+			SetRow(ROW_SHOP, c_grey, "SHOP %d/%d %-13s Lv%d MAX", m_shopSel + 1, SHOP_ENTRIES, name,
+				   m_sim.StatLevel(stat));
 		} else {
+			char text[12];
+			price.Format(text);
 			bool afford = m_sim.Cash() >= price;
-			SetRow(ROW_SHOP, afford ? c_amber : c_grey, "SHOP %d/%d %-13s Lv%d $%-4d", m_shopSel + 1, SHOP_ENTRIES,
-				   name, m_sim.StatLevel(stat), price);
+			SetRow(ROW_SHOP, afford ? c_amber : c_grey, "SHOP %d/%d %-13s Lv%d $%s", m_shopSel + 1, SHOP_ENTRIES,
+				   name, m_sim.StatLevel(stat), text);
 		}
 	}
 
 	SetRow(ROW_TOAST, c_amber, "%s", m_toastTimer ? m_toast : "");
-	SetRow(ROW_HELP, c_grey, "X dial O hang up SEL shop SQ buy%s%s", m_sim.HasUpgrade(Upgrade::Redial) ? " TRI" : "",
-		   m_sim.IsStationUnlocked(1) ? " L1/R1" : "");
+	SetRow(ROW_HELP, c_grey, "X dial O hang SEL/SQ shop%s%s START", m_sim.HasUpgrade(Upgrade::Redial) ? " TRI" : "",
+		   m_sim.IsStationUnlocked(1) ? " L/R" : "");
 
 	// the middle banner: who you are the moment you get on air, and a win held long enough to see
 	if (m_bannerTimer) {
@@ -470,7 +640,9 @@ void PhoneScene::UpdateText(void) {
 		bool blink = m_flashTimer & 8;
 		if (line.outcome == Outcome::Won) {
 			SetRow(ROW_BANNER1, blink ? c_white : c_amber, "    *** YOU WIN!  CALLER #%d ***", line.callerNumber);
-			SetRow(ROW_BANNER2, c_amber, "          +$%d  cash $%d", line.prizeWon, m_shownCash);
+			char won[12];
+			line.prizeWon.Format(won);
+			SetRow(ROW_BANNER2, c_amber, "          +$%s  cash $%s", won, cash);
 		} else {
 			SetRow(ROW_BANNER1, c_green, "  ON AIR!  You are caller #%d", line.callerNumber);
 			SetRow(ROW_BANNER2, c_white, "  DJ wants #%d: %s", line.callerTarget,
@@ -482,6 +654,100 @@ void PhoneScene::UpdateText(void) {
 	}
 }
 
+void PhoneScene::TickClock(void) {
+	auto& gpu = g_madnightEngine.gpu();
+	uint32_t now = gpu.getFrameCount();
+	m_frameAcc += now - m_lastFrame;
+	m_lastFrame = now;
+	uint32_t rate = gpu.getRefreshRate();
+	while (m_frameAcc >= rate) {
+		m_frameAcc -= rate;
+		m_playSeconds++;
+	}
+	if (!m_intro && !m_menu && !m_sim.IsRoundOpen() && m_playSeconds >= m_nextSaveAt) {
+		m_nextSaveAt = m_playSeconds + AUTOSAVE_SECONDS;
+		m_save.Save(m_sim, m_playSeconds);
+	}
+}
+
+void PhoneScene::UpdateMenu(void) {
+	char rep[12], all[12], gain[12], text[16], price[12];
+	m_sim.Reputation().Format(rep);
+	m_sim.AllTimeEarned().Format(all);
+	uint8_t r = ROW_INTRO;
+	SetRow(r++, c_amber, "      REPUTATION AND AREA CODES");
+	SetRow(r++, c_white, "Reputation %-8s area codes moved %d", rep, m_sim.AreaCodes());
+	SetRow(r++, c_grey, "Played %dh%02dm   all-time $%s", m_playSeconds / 3600, m_playSeconds / 60 % 60, all);
+	SetRow(r++, c_white, "");
+
+	BigNum pending = m_sim.PendingRep();
+	char cursor = m_menuSel == 0 ? '>' : ' ';
+	if (pending.IsZero()) {
+		m_sim.NextRepAt().Format(gain);
+		SetRow(r++, m_menuSel == 0 ? c_white : c_grey, "%cNew area code: at $%s all-time", cursor, gain);
+	} else {
+		pending.Format(gain);
+		SetRow(r++, m_menuSel == 0 ? c_amber : c_white, "%cNew area code now: +%s rep", cursor, gain);
+	}
+
+	for (uint8_t i = 0; i < uint8_t(Perk::Count); i++) {
+		Perk perk = Perk(i);
+		uint16_t level = m_sim.PerkLevel(perk);
+		switch (perk) {
+			case Perk::BigName:
+				FormatFactor(text, BigNum::FromUint(2).Pow(level));
+				break;
+			case Perk::HeadStart:
+				text[0] = '$';
+				m_sim.StartCash().Format(text + 1);
+				break;
+			case Perk::SpeedDial:
+				snprintf(text, sizeof(text), "%s", level ? "redial" : "no");
+				break;
+			default:
+				snprintf(text, sizeof(text), "x1.%02d", (m_sim.GrowthMilli() - 1000) / 10);
+				break;
+		}
+		BigNum cost = m_sim.PerkPrice(perk);
+		bool selected = m_menuSel == i + 1;
+		psyqo::Color colour = selected ? (m_sim.Reputation() >= cost && !cost.IsZero() ? c_amber : c_white) : c_grey;
+		if (cost.IsZero()) {
+			SetRow(r++, colour, "%c%-11sLv%-3d %-10s MAX", selected ? '>' : ' ', Sim::c_perks[i].name, level, text);
+		} else {
+			cost.Format(price);
+			SetRow(r++, colour, "%c%-11sLv%-3d %-10s %s rep", selected ? '>' : ' ', Sim::c_perks[i].name, level,
+				   text, price);
+		}
+	}
+	SetRow(r++, c_white, "");
+
+	static constexpr const char* c_help[MENU_ENTRIES] = {
+		"Resets cash, desk, stats; keeps perks",
+		"Every level doubles every prize",
+		"Start each area code with more cash",
+		"Start each area code with redial",
+		"Shop prices grow slower per level",
+	};
+	if (m_menuSel == 0 && m_menuArmed) {
+		SetRow(r++, (m_flashTimer & 16) ? c_red : c_amber, "Sure? X again to move, O to stay");
+	} else {
+		SetRow(r++, c_green, "%s", c_help[m_menuSel]);
+	}
+
+	if (m_save.Writing()) {
+		SetRow(r++, c_grey, "Saving to memory card 1...");
+	} else if (m_save.CardOk()) {
+		if (m_save.SavesDone()) {
+			SetRow(r++, c_grey, "Card 1: saved %ds ago, every 2 min", m_playSeconds - m_save.LastSavedAt());
+		} else {
+			SetRow(r++, c_grey, "Card 1: autosave every 2 min");
+		}
+	} else {
+		SetRow(r++, c_grey, "No memory card in slot 1: not saving");
+	}
+	SetRow(r++, c_grey, "UP/DOWN pick   X buy   START back");
+}
+
 void PhoneScene::frame() {
 	auto& renderer = Renderer::Instance();
 	uint32_t deltaTime = renderer.Process();
@@ -490,7 +756,8 @@ void PhoneScene::frame() {
 	}
 
 	m_flashTimer += deltaTime;
-	if (!m_intro) {
+	TickClock();
+	if (!m_intro && !m_menu) {
 		m_sim.Tick(deltaTime);
 		m_tones.Tick(deltaTime);
 		m_keyFlash = m_keyFlash > deltaTime ? m_keyFlash - deltaTime : 0;
@@ -510,12 +777,16 @@ void PhoneScene::frame() {
 		}
 
 		// cash counts up rather than jumping, so a win is seen landing
-		uint32_t cash = m_sim.Cash();
+		const BigNum& cash = m_sim.Cash();
 		if (m_shownCash > cash) {
 			m_shownCash = cash;
 		} else if (m_shownCash < cash) {
-			uint32_t step = (cash - m_shownCash) / 16;
-			m_shownCash += (step ? step : 1) * deltaTime;
+			BigNum diff = cash - m_shownCash;
+			BigNum step = (diff * BigNum::FromMilli(62)).Floor();
+			if (step.IsZero()) {
+				step = BigNum::FromUint(1);
+			}
+			m_shownCash += step * BigNum::FromUint(deltaTime);
 			if (m_shownCash > cash) {
 				m_shownCash = cash;
 			}
@@ -526,9 +797,15 @@ void PhoneScene::frame() {
 	renderer.Render(deltaTime);
 
 	m_bandCount = 0;
-	if (m_intro) {
+	if (m_intro || m_menu) {
+		// twice: one semi-transparent band still lets the desk fight the text
 		DrawBand(0, 240, c_band);
-		UpdateIntro();
+		DrawBand(0, 240, c_band);
+		if (m_intro) {
+			UpdateIntro();
+		} else {
+			UpdateMenu();
+		}
 	} else {
 		DrawBand(0, TOP_BAND_H, c_band);
 		DrawBand(BOTTOM_BAND_Y, 240 - BOTTOM_BAND_Y, c_band);
@@ -539,7 +816,7 @@ void PhoneScene::frame() {
 	}
 
 	UpdateText();
-	if (m_intro) {
+	if (m_intro || m_menu) {
 		for (uint8_t i = 0; i < ROW_INTRO; i++) {
 			m_rows[i]->SetDisplayText("");
 		}
