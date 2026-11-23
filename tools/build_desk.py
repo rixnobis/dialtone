@@ -58,7 +58,23 @@ def paint(bm, layer, faces, colour):
             loop[layer] = (*colour, 1.0)
 
 
-def add_box(bm, layer, lo, hi, top, side, bottom=None):
+def add_grid(bm, layer, lo, hi, z, step, colour, holes=()):
+    # a flat, upward-facing rectangle at height z cut into tiles of about `step` on a side;
+    # a tile whose centre falls inside one of `holes` ((x0, y0, x1, y1)) is left out
+    nx = max(1, round((hi[0] - lo[0]) / step))
+    ny = max(1, round((hi[1] - lo[1]) / step))
+    xs = [lo[0] + (hi[0] - lo[0]) * i / nx for i in range(nx + 1)]
+    ys = [lo[1] + (hi[1] - lo[1]) * j / ny for j in range(ny + 1)]
+    v = [[bm.verts.new((x, y, z)) for x in xs] for y in ys]
+    for j in range(ny):
+        for i in range(nx):
+            cx, cy = (xs[i] + xs[i + 1]) / 2, (ys[j] + ys[j + 1]) / 2
+            if any(h[0] < cx < h[2] and h[1] < cy < h[3] for h in holes):
+                continue
+            paint(bm, layer, [bm.faces.new([v[j][i], v[j][i + 1], v[j + 1][i + 1], v[j + 1][i]])], colour)
+
+
+def add_box(bm, layer, lo, hi, top, side, bottom=None, skip=()):
     # an axis aligned box; top/side/bottom colours so it reads as solid without lighting
     verts = [bm.verts.new((x, y, z)) for z in (lo[2], hi[2]) for y in (lo[1], hi[1]) for x in (lo[0], hi[0])]
     # index = x + 2y + 4z
@@ -72,6 +88,8 @@ def add_box(bm, layer, lo, hi, top, side, bottom=None):
     }
     shade = {"front": 1.0, "back": 0.7, "left": 0.8, "right": 0.8}
     for name, idx in quads.items():
+        if name in skip:
+            continue
         f = bm.faces.new([verts[i] for i in idx])
         if name == "top":
             c = top
@@ -110,14 +128,19 @@ def build():
 
     # desk and the wall behind it, baked in place
     bm, col = start("DESK")
-    add_box(bm, col, (-3.4, -0.7, -0.15), (3.4, 2.5, 0.0), WOOD, WOOD_DARK)
+    # the renderer does not cull back faces and the ordering table sorts each face by its average
+    # depth, so a big face sorts in front of whatever stands on it: the desk top is tiles, with no
+    # tile under the notepad, and the faces the seated camera never sees are not built at all
+    NOTEPAD = (-0.2, -0.3, 0.6, 0.5)
+    add_box(bm, col, (-3.4, -0.7, -0.15), (3.4, 2.5, 0.0), WOOD, WOOD_DARK, skip=("top", "bottom", "back"))
+    add_grid(bm, col, (-3.4, -0.7), (3.4, 2.5), 0.0, 0.4, WOOD, holes=[NOTEPAD])
     add_box(bm, col, (-3.4, -0.75, -1.4), (3.4, -0.65, -0.15), WOOD_DARK, WOOD_DARK)
     add_box(bm, col, (-5.0, 2.5, -1.5), (5.0, 2.6, 0.9), (0.2, 0.25, 0.22), (0.22, 0.3, 0.27))
     add_box(bm, col, (-5.0, 2.5, 0.9), (5.0, 2.6, 4.0), (0.2, 0.3, 0.32), (0.26, 0.36, 0.4))
     # a calendar on the wall and a notepad on the desk, so the desk is not a bare plank
     add_box(bm, col, (-0.5, 2.45, 1.4), (0.5, 2.5, 2.5), (0.9, 0.9, 0.85), (0.92, 0.9, 0.82))
     add_box(bm, col, (-0.5, 2.44, 2.2), (0.5, 2.46, 2.5), (0.7, 0.15, 0.1), (0.75, 0.18, 0.12))
-    add_box(bm, col, (-0.2, -0.4, 0.0), (0.45, 0.35, 0.03), (0.95, 0.92, 0.6), (0.8, 0.78, 0.5))
+    add_box(bm, col, (NOTEPAD[0], NOTEPAD[1], 0.0), (NOTEPAD[2], NOTEPAD[3], 0.03), (0.95, 0.92, 0.6), (0.8, 0.78, 0.5), skip=("bottom",))
     new_object("DESK", bm)
 
     # the phone body: a wedge with the keypad on its slope and a cradle at the back
