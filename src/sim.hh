@@ -109,6 +109,7 @@ class Sim final {
 	// player input
 	void PressDigit(char digit);
 	void HangUp(void);
+	void DeleteDigit(void); // takes back the last digit dialed by hand; none left frees the line
 	void Redial(void);
 	bool BuyNextUpgrade(void);
 	bool BuyStat(Stat stat);

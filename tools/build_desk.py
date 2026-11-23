@@ -36,12 +36,12 @@ LAYOUT = os.path.join(ROOT, "src", "desk_layout.hh")
 # phone keypad, on the sloped top of the phone body
 PHONE_X = -1.15
 SLOPE_FRONT_Z = 0.22
-SLOPE_BACK_Z = 0.42
+SLOPE_BACK_Z = 0.62
 SLOPE_DEPTH = 0.8
 SLOPE = math.atan2(SLOPE_BACK_Z - SLOPE_FRONT_Z, SLOPE_DEPTH)
 KEY_PITCH_X = 0.3
-KEY_PITCH_S = 0.165
-KEY_S0 = 0.66
+KEY_PITCH_S = 0.18
+KEY_S0 = 0.68
 
 WOOD = (0.55, 0.35, 0.2)
 WOOD_DARK = (0.38, 0.22, 0.12)
@@ -91,6 +91,28 @@ def add_grid(bm, layer, lo, hi, z, step, colour, holes=()):
         for i in range(nx):
             cx, cy = (xs[i] + xs[i + 1]) / 2, (ys[j] + ys[j + 1]) / 2
             if any(h[0] < cx < h[2] and h[1] < cy < h[3] for h in holes):
+                continue
+            paint(bm, layer, [bm.faces.new([v[j][i], v[j][i + 1], v[j + 1][i + 1], v[j + 1][i]])], colour)
+
+
+def add_front(bm, layer, x0, x1, y, z0, z1, step, colour, holes=()):
+    # a wall facing the camera (-y), cut at every hole edge and then into tiles no bigger than
+    # `step`, so the small parts in front of it sort in front; tiles inside `holes` ((x0, z0, x1, z1))
+    # are left out
+    def cuts(a, b, edges):
+        points = sorted(set([a, b] + [e for e in edges if a < e < b]))
+        out = [points[0]]
+        for p, q in zip(points, points[1:]):
+            n = max(1, math.ceil((q - p) / step - 1e-9))
+            out += [p + (q - p) * i / n for i in range(1, n + 1)]
+        return out
+    xs = cuts(x0, x1, [h[0] for h in holes] + [h[2] for h in holes])
+    zs = cuts(z0, z1, [h[1] for h in holes] + [h[3] for h in holes])
+    v = [[bm.verts.new((x, y, z)) for x in xs] for z in zs]
+    for j in range(len(zs) - 1):
+        for i in range(len(xs) - 1):
+            cx, cz = (xs[i] + xs[i + 1]) / 2, (zs[j] + zs[j + 1]) / 2
+            if any(h[0] < cx < h[2] and h[1] < cz < h[3] for h in holes):
                 continue
             paint(bm, layer, [bm.faces.new([v[j][i], v[j][i + 1], v[j + 1][i + 1], v[j + 1][i]])], colour)
 
@@ -153,15 +175,19 @@ def build():
     # depth, so a big face sorts in front of whatever stands on it: the desk top is tiles, with no
     # tile under the notepad, and the faces the seated camera never sees are not built at all
     NOTEPAD = (-0.2, -0.3, 0.6, 0.5)
-    add_box(bm, col, (-3.4, -0.7, -0.15), (3.4, 2.5, 0.0), WOOD, WOOD_DARK, skip=("top", "bottom", "back"))
-    add_grid(bm, col, (-3.4, -0.7), (3.4, 2.5), 0.0, 0.4, WOOD, holes=[NOTEPAD])
+    add_box(bm, col, (-3.4, -0.7, -0.15), (3.4, 2.5, 0.0), WOOD, WOOD_DARK, skip=("top", "bottom", "back", "front"))
+    add_front(bm, col, -3.4, 3.4, -0.7, -0.15, 0.0, 0.2, WOOD_DARK)
+    # tiles small enough that none needs the renderer's subdivision, whose split edges crack against
+    # an unsplit neighbour
+    add_grid(bm, col, (-3.4, -0.7), (3.4, 2.5), 0.0, 0.2, WOOD, holes=[NOTEPAD])
     add_box(bm, col, (-3.4, -0.75, -1.4), (3.4, -0.65, -0.15), WOOD_DARK, WOOD_DARK)
     add_box(bm, col, (-5.0, 2.5, -1.5), (5.0, 2.6, 0.9), (0.2, 0.25, 0.22), (0.22, 0.3, 0.27))
     add_box(bm, col, (-5.0, 2.5, 0.9), (5.0, 2.6, 4.0), (0.2, 0.3, 0.32), (0.26, 0.36, 0.4))
     # a calendar on the wall and a notepad on the desk, so the desk is not a bare plank
     add_box(bm, col, (-0.5, 2.45, 1.4), (0.5, 2.5, 2.5), (0.9, 0.9, 0.85), (0.92, 0.9, 0.82))
     add_box(bm, col, (-0.5, 2.44, 2.2), (0.5, 2.46, 2.5), (0.7, 0.15, 0.1), (0.75, 0.18, 0.12))
-    add_box(bm, col, (NOTEPAD[0], NOTEPAD[1], 0.0), (NOTEPAD[2], NOTEPAD[3], 0.03), (0.95, 0.92, 0.6), (0.8, 0.78, 0.5), skip=("bottom",))
+    add_box(bm, col, (NOTEPAD[0], NOTEPAD[1], 0.0), (NOTEPAD[2], NOTEPAD[3], 0.03), (0.95, 0.92, 0.6), (0.8, 0.78, 0.5), skip=("bottom", "top"))
+    add_grid(bm, col, NOTEPAD[:2], NOTEPAD[2:], 0.03, 0.2, (0.95, 0.92, 0.6))
     new_object("DESK", bm)
 
     # the phone body: a wedge with the keypad on its slope and a cradle at the back
@@ -193,7 +219,7 @@ def build():
     # key caps, already tilted to the slope, three tints the game swaps between
     for name, colour in (("KEY", KEY), ("KEYSEL", (1.0, 0.7, 0.15)), ("KEYLIT", (1.0, 1.0, 0.75))):
         bm, col = start(name)
-        add_box(bm, col, (-0.12, -0.07, 0.0), (0.12, 0.07, 0.05), colour, tuple(c * 0.75 for c in colour))
+        add_box(bm, col, (-0.125, -0.075, 0.0), (0.125, 0.075, 0.05), colour, tuple(c * 0.75 for c in colour))
         bmesh.ops.rotate(bm, verts=bm.verts, cent=(0, 0, 0), matrix=__import__("mathutils").Matrix.Rotation(SLOPE, 3, "X"))
         new_object(name, bm)
 
@@ -230,7 +256,9 @@ def build():
 
     # the radio
     bm, col = start("RADIO")
-    add_box(bm, col, (0.7, 0.5, 0.0), (2.5, 1.4, 1.0), (0.45, 0.26, 0.14), (0.42, 0.24, 0.12))
+    # the front is tiles with the speaker and the dial window cut out, so neither sorts behind it
+    add_box(bm, col, (0.7, 0.5, 0.0), (2.5, 1.4, 1.0), (0.45, 0.26, 0.14), (0.42, 0.24, 0.12), skip=("front",))
+    add_front(bm, col, 0.7, 2.5, 0.5, 0.0, 1.0, 0.3, (0.42, 0.24, 0.12), holes=[(0.85, 0.15, 1.55, 0.85), (1.65, 0.55, 2.35, 0.8)])
     add_box(bm, col, (0.85, 0.48, 0.15), (1.55, 0.5, 0.85), (0.12, 0.09, 0.07), (0.12, 0.09, 0.07))
     for z in (0.3, 0.45, 0.6, 0.75):
         add_box(bm, col, (0.85, 0.47, z), (1.55, 0.48, z + 0.03), (0.3, 0.2, 0.12), (0.3, 0.2, 0.12))

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "key_glyphs.hh"
 #include "save.hh"
 #include "sim.hh"
 #include "tones.hh"
@@ -35,6 +36,8 @@ class PhoneScene final : public psyqo::Scene, public SimListener {
 	void UpdateDesk(void);
 	void HandleButton(psyqo::AdvancedPad::Button button);
 	void UpdateText(void);
+	void UpdateShop(void);
+	void DrawKeyDigits(void);
 	void DrawBand(int16_t y, int16_t h, psyqo::Color colour);
 	void UpdateIntro(void);
 	void UpdateMenu(void);
@@ -69,13 +72,16 @@ class PhoneScene final : public psyqo::Scene, public SimListener {
 	bool m_handsetUp = false;
 	uint8_t m_needleStation = 0xff;
 
-	psyqo::Fragments::SimpleFragment<psyqo::Prim::Rectangle> m_bands[2][3];
+	psyqo::Fragments::SimpleFragment<psyqo::Prim::Rectangle> m_bands[2][4];
+	KeyGlyphs m_glyphs;
 	uint8_t m_bandCount = 0;
 
 	bool BuyShopItem(void);
 
 	uint8_t m_cursorX = 0, m_cursorY = 0;
 	uint8_t m_shopSel = 0; // 0 = the next desk item, then one entry per Stat
+	bool m_shopOpen = false;
+	int8_t m_lastLocked = -2; // the next locked station last frame, to announce one opening
 	char m_lastKey = 0;
 	uint8_t m_keyFlash = 0;
 	uint16_t m_flashTimer = 0; // blinks whatever wants attention

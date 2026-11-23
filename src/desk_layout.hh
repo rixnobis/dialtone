@@ -9,24 +9,24 @@ namespace desk {
 
 using namespace psyqo::fixed_point_literals;
 
-constexpr psyqo::Vec3 HANDSET = {-1.1500_ws, -0.5800_ws, 1.0200_ws};
-constexpr psyqo::Vec3 REDIAL = {-0.5900_ws, -0.2800_ws, 0.2000_ws};
+constexpr psyqo::Vec3 HANDSET = {-1.1500_ws, -0.7800_ws, 1.0200_ws};
+constexpr psyqo::Vec3 REDIAL = {-0.5900_ws, -0.3300_ws, 0.2000_ws};
 constexpr psyqo::Vec3 LAMP_LINE2 = {0.3500_ws, -0.2600_ws, 0.7000_ws};
 constexpr psyqo::Vec3 LAMP_AUTO = {0.2000_ws, -0.3500_ws, 1.8000_ws};
 constexpr psyqo::Vec3 LAMP_AIR = {1.6000_ws, -1.0000_ws, 0.9000_ws};
 constexpr psyqo::Vec3 KEYS[12] = {
-	{-1.4500_ws, -0.3950_ws, 0.6600_ws},
-	{-1.1500_ws, -0.3950_ws, 0.6600_ws},
-	{-0.8500_ws, -0.3950_ws, 0.6600_ws},
-	{-1.4500_ws, -0.3538_ws, 0.4950_ws},
-	{-1.1500_ws, -0.3538_ws, 0.4950_ws},
-	{-0.8500_ws, -0.3538_ws, 0.4950_ws},
-	{-1.4500_ws, -0.3125_ws, 0.3300_ws},
-	{-1.1500_ws, -0.3125_ws, 0.3300_ws},
-	{-0.8500_ws, -0.3125_ws, 0.3300_ws},
-	{-1.4500_ws, -0.2712_ws, 0.1650_ws},
-	{-1.1500_ws, -0.2712_ws, 0.1650_ws},
-	{-0.8500_ws, -0.2712_ws, 0.1650_ws},
+	{-1.4500_ws, -0.5700_ws, 0.6800_ws},
+	{-1.1500_ws, -0.5700_ws, 0.6800_ws},
+	{-0.8500_ws, -0.5700_ws, 0.6800_ws},
+	{-1.4500_ws, -0.4800_ws, 0.5000_ws},
+	{-1.1500_ws, -0.4800_ws, 0.5000_ws},
+	{-0.8500_ws, -0.4800_ws, 0.5000_ws},
+	{-1.4500_ws, -0.3900_ws, 0.3200_ws},
+	{-1.1500_ws, -0.3900_ws, 0.3200_ws},
+	{-0.8500_ws, -0.3900_ws, 0.3200_ws},
+	{-1.4500_ws, -0.3000_ws, 0.1400_ws},
+	{-1.1500_ws, -0.3000_ws, 0.1400_ws},
+	{-0.8500_ws, -0.3000_ws, 0.1400_ws},
 };
 constexpr psyqo::Vec3 NEEDLE[2] = {{1.8000_ws, -0.5600_ws, 0.4650_ws}, {2.2000_ws, -0.5600_ws, 0.4650_ws}};
 

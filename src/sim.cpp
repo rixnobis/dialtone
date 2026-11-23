@@ -371,6 +371,22 @@ void Sim::PressDigit(char digit) {
 	}
 }
 
+void Sim::DeleteDigit(void) {
+	if (m_handLine < 0) {
+		return;
+	}
+	auto& line = m_lines[m_handLine];
+	if (line.digitCount > 0) {
+		line.digits[--line.digitCount] = 0;
+	}
+	if (line.digitCount == 0) {
+		line.state = LineState::Idle;
+		line.outcome = Outcome::None;
+		line.timer = 0;
+		m_handLine = -1;
+	}
+}
+
 void Sim::HangUp(void) {
 	for (uint8_t i = 0; i < MAX_LINES; i++) {
 		auto& line = m_lines[i];

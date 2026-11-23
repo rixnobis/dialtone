@@ -5,6 +5,8 @@
 #include "render/lighting.hh"
 #include "render/renderer.hh"
 
+#include <psyqo/gte-kernels.hh>
+#include <psyqo/gte-registers.hh>
 #include <psyqo/xprintf.h>
 #include <stdarg.h>
 
@@ -26,53 +28,60 @@ static constexpr const char* c_keyMeshes[] = {"MODELS/KEY.MB", "MODELS/KEYSEL.MB
 static constexpr const char* c_lampMeshes[] = {"MODELS/LAMP.MB", "MODELS/LAMPLIT.MB"};
 
 // seated at the desk, looking down at the phone and the radio
-static constexpr psyqo::Vec3 c_eye = {0.05_ws, -1.85_ws, -1.6_ws};
-static constexpr psyqo::Vec3 c_lookAt = {0.3_ws, -0.2_ws, 0.85_ws};
+static constexpr psyqo::Vec3 c_eye = {-0.3_ws, -2.0_ws, -1.3_ws};
+static constexpr psyqo::Vec3 c_lookAt = {0.0_ws, -0.2_ws, 0.9_ws};
 // the engine projects at H = 120 (about 106 degrees across); a desk wants a narrower lens.
 // Its visibility check still assumes 120, which only errs towards drawing more
-static constexpr uint16_t DESK_PROJECTION = 150;
-static constexpr psyqo::FixedPoint<> HANDSET_LIFT = 0.45_ws;
+static constexpr uint16_t DESK_PROJECTION = 180;
+static constexpr psyqo::FixedPoint<> HANDSET_LIFT = 0.25_ws;
+static constexpr psyqo::FixedPoint<> KEY_TOP = 0.05_ws; // cap height in tools/build_desk.py
 
 static constexpr uint8_t SHOP_ENTRIES = 1 + uint8_t(Stat::Count);
 
+// what is always on screen: cash and the number to call, the DJ, the contest, the line you dial on.
+// Line 2 shows once bought, toasts come and go, the shop is a panel SELECT opens
 enum TextRow : uint8_t {
-	ROW_TITLE,
-	ROW_STATION,
+	ROW_CASH,
 	ROW_DJ,
-	ROW_ROUND,
+	ROW_CONTEST,
 	ROW_LINE1,
 	ROW_LINE2,
-	ROW_SHOP, // the shop and nothing else
 	ROW_TOAST,
-	ROW_HELP,
 	ROW_BANNER1,
 	ROW_BANNER2,
-	ROW_INTRO, // first of INTRO_ROWS
+	ROW_INTRO, // first of INTRO_ROWS, also the shop panel's rows
 };
 static constexpr uint8_t INTRO_ROWS = 13;
 static constexpr uint8_t ROW_COUNT = ROW_INTRO + INTRO_ROWS;
-// rows stay within lines 12-224: TVs and emulators that crop overscan hide the top and bottom 8
-static constexpr int16_t c_rowY[ROW_INTRO] = {12, 28, 44, 60, 144, 160, 176, 192, 208, 98, 114};
+// rows stay within lines 12-224: TVs and emulators that crop overscan hide the top and bottom 8.
+// The toast row moves up above line 2 once there is one
+static constexpr int16_t c_rowY[ROW_INTRO] = {12, 28, 44, 208, 192, 192, 98, 114};
+static constexpr int16_t TOAST_Y_TWO_LINES = 176;
+static constexpr uint8_t SHOP_FIRST_ROW = ROW_INTRO + 4, SHOP_ROWS = 6; // y 76..156
+static constexpr int16_t SHOP_BAND_Y = 72, SHOP_BAND_H = 104;
 
-static constexpr int16_t TOP_BAND_H = 80, BOTTOM_BAND_Y = 140, BANNER_Y = 92, BANNER_H = 42;
+static constexpr int16_t TOP_BAND_H = 64, BANNER_Y = 92, BANNER_H = 42;
+static constexpr psyqo::Color c_ink = {.r = 40, .g = 20, .b = 12};
 static constexpr uint16_t WIN_BANNER_TICKS = 150;
 // the card has the pad bus to itself while it writes (about 3 s in Redux), so the autosave waits for
 // the break between contests once it is due
 static constexpr uint16_t AUTOSAVE_SECONDS = 120;
-static constexpr uint8_t MENU_ENTRIES = 1 + uint8_t(Perk::Count); // the move, then the perks
+// the move, the perks, then the how-to-play card
+static constexpr uint8_t MENU_ENTRIES = 2 + uint8_t(Perk::Count);
+static constexpr uint8_t MENU_HOWTO = MENU_ENTRIES - 1;
 
 static constexpr const char* c_intro[INTRO_ROWS] = {
 	"         HOW TO PLAY DIALTONE",
 	"",
-	"The radio DJ says \"caller N wins\".",
-	"Dial the station's number on the phone",
-	"and get through as exactly caller N.",
-	"Too early: small prize, call again.",
-	"BUSY: hang up and redial, keep trying.",
+	"The DJ says \"caller N wins\". Dial the",
+	"station's number and get through as",
+	"exactly caller N. Too early: a small",
+	"prize, call again. BUSY: dial again.",
 	"",
-	"D-pad + X  dial a key     O  hang up",
-	"SELECT  pick shop item  SQUARE  buy",
-	"Later: TRI redial L1/R1 tune START rep",
+	"D-pad + X  dial      O  undo a digit",
+	"L2 or R2  hang up    SELECT  shop",
+	"TRIANGLE  redial     L1/R1  tune",
+	"START  reputation, and this card",
 	"",
 	"         press X to start",
 };
@@ -147,6 +156,7 @@ void PhoneScene::start(StartReason reason) {
 	}
 
 	CreateDesk();
+	m_glyphs.Init(g_madnightEngine.gpu());
 
 	g_madnightEngine.m_rand.seed(g_madnightEngine.gpu().now());
 	m_tones.Init();
@@ -315,7 +325,15 @@ void PhoneScene::HandleMenuButton(psyqo::AdvancedPad::Button button) {
 			printf("DIALTONE: menu closed\n");
 			break;
 		case Button::Cross:
-			if (m_menuSel == 0 && m_moving) {
+			if (m_menuSel == MENU_HOWTO) {
+				if (m_moving) {
+					StartAreaCode();
+				}
+				m_menu = false;
+				m_intro = true;
+				ClearOverlay();
+				printf("DIALTONE: how to play shown\n");
+			} else if (m_menuSel == 0 && m_moving) {
 				StartAreaCode();
 				m_menu = false;
 				ClearOverlay();
@@ -369,6 +387,31 @@ void PhoneScene::HandleButton(psyqo::AdvancedPad::Button button) {
 		HandleMenuButton(button);
 		return;
 	}
+	if (m_shopOpen) {
+		// the game keeps running behind the panel; the d-pad picks, X or SQUARE buys
+		switch (button) {
+			case Button::Up:
+				m_shopSel = (m_shopSel + SHOP_ENTRIES - 1) % SHOP_ENTRIES;
+				return;
+			case Button::Down:
+				m_shopSel = (m_shopSel + 1) % SHOP_ENTRIES;
+				return;
+			case Button::Left:
+			case Button::Right:
+				return;
+			case Button::Cross:
+			case Button::Square:
+				BuyShopItem();
+				return;
+			case Button::Select:
+			case Button::Circle:
+				m_shopOpen = false;
+				ClearOverlay();
+				return;
+			default:
+				break;
+		}
+	}
 	switch (button) {
 		case Button::Up:
 			m_cursorY = (m_cursorY + KEYPAD_ROWS - 1) % KEYPAD_ROWS;
@@ -386,16 +429,18 @@ void PhoneScene::HandleButton(psyqo::AdvancedPad::Button button) {
 			m_sim.PressDigit(c_keys[m_cursorY][m_cursorX]);
 			break;
 		case Button::Circle:
+			m_sim.DeleteDigit();
+			break;
+		case Button::L2:
+		case Button::R2:
 			m_sim.HangUp();
 			break;
 		case Button::Triangle:
 			m_sim.Redial();
 			break;
-		case Button::Square:
-			BuyShopItem();
-			break;
 		case Button::Select:
-			m_shopSel = (m_shopSel + 1) % SHOP_ENTRIES;
+			m_shopOpen = !m_shopOpen;
+			ClearOverlay();
 			break;
 		case Button::L1:
 			m_sim.TuneStation(-1);
@@ -404,6 +449,8 @@ void PhoneScene::HandleButton(psyqo::AdvancedPad::Button button) {
 			m_sim.TuneStation(1);
 			break;
 		case Button::Start:
+			m_shopOpen = false;
+			ClearOverlay();
 			m_menu = true;
 			m_menuSel = 0;
 			m_menuArmed = false;
@@ -512,82 +559,106 @@ void PhoneScene::UpdateIntro(void) {
 
 void PhoneScene::UpdateLineRow(uint8_t index) {
 	const auto& line = m_sim.GetLine(index);
-	const auto& station = m_sim.CurrentStation();
 	uint8_t row = index == 0 ? ROW_LINE1 : ROW_LINE2;
 	bool blink = m_flashTimer & 16;
 	char number[12];
 	FormatNumber(number, line.digits, line.digitCount);
+	// with one phone the number speaks for itself; with two, say which line
+	char label[4] = "";
+	if (m_sim.HasUpgrade(Upgrade::SecondLine)) {
+		snprintf(label, sizeof(label), "%d ", index + 1);
+	}
 
 	switch (line.state) {
 		case LineState::Locked:
-			SetRow(row, c_grey, "LINE %d  not bought yet", index + 1);
+			SetRow(row, c_grey, "");
 			break;
 		case LineState::Idle:
 			// an old "too late" means nothing once the next contest is open
 			switch (line.outcome == Outcome::NoAnswer && m_sim.IsRoundOpen() ? Outcome::None : line.outcome) {
 				case Outcome::Busy:
-					SetRow(row, c_white, "LINE %d  was busy: dial again", index + 1);
+					SetRow(row, c_white, "%s%s  was busy, dial again", label, number);
 					break;
 				case Outcome::WrongNumber:
-					char want[12];
-					FormatNumber(want, station.number, NUMBER_LENGTH);
-					SetRow(row, c_red, "LINE %d  wrong number, try %s", index + 1, want);
+					SetRow(row, c_red, "%s%s  wrong number", label, number);
 					break;
 				case Outcome::NoAnswer:
-					SetRow(row, c_white, "LINE %d  too late, contest over", index + 1);
+					SetRow(row, c_grey, "%s%s  too late", label, number);
 					break;
 				case Outcome::Missed:
-					SetRow(row, c_white, "LINE %d  you #%d, DJ wanted #%d", index + 1, line.callerNumber,
+					SetRow(row, c_white, "%s%s  you #%d, DJ wanted #%d", label, number, line.callerNumber,
 						   line.callerTarget);
 					break;
 				case Outcome::Won:
 					char won[12];
 					line.prizeWon.Format(won);
-					SetRow(row, c_amber, "LINE %d  you were #%d: won $%s", index + 1, line.callerNumber, won);
+					SetRow(row, c_amber, "%s%s  won $%s", label, number, won);
 					break;
 				default:
-					SetRow(row, c_white, "LINE %d  free%s", index + 1,
-						   m_sim.IsRoundOpen() ? ": dial the station now" : "");
+					SetRow(row, m_sim.IsRoundOpen() ? c_white : c_grey, "%s%s", label, number);
 					break;
 			}
 			break;
 		case LineState::Dialing:
-			SetRow(row, c_white, "LINE %d  %-12s %s", index + 1,
+			SetRow(row, c_white, "%s%s  %s", label, number,
 				   line.digitCount == NUMBER_LENGTH ? "connecting"
 				   : line.autoDialing				? "auto-dialing"
-													: "dialing",
-				   number);
+													: "");
 			break;
 		case LineState::Ringing:
-			SetRow(row, blink ? c_amber : c_white, "LINE %d  ringing the DJ... %s", index + 1, number);
+			SetRow(row, blink ? c_amber : c_white, "%s%s  ringing...", label, number);
 			break;
 		case LineState::Busy:
-			if (line.outcome == Outcome::WrongNumber) {
-				SetRow(row, c_red, "LINE %d  WRONG NUMBER   %s", index + 1, number);
-			} else {
-				SetRow(row, c_red, "LINE %d  BUSY, redial %s", index + 1, m_sim.HasUpgrade(Upgrade::Redial) ? "TRI" : "");
-			}
+			SetRow(row, c_red, "%s%s  %s", label, number, line.outcome == Outcome::WrongNumber ? "WRONG NUMBER" : "BUSY");
 			break;
 		case LineState::OnAir:
 			if (line.outcome == Outcome::Won) {
-				SetRow(row, blink ? c_amber : c_green, "LINE %d  WINNER! caller #%d", index + 1, line.callerNumber);
+				SetRow(row, blink ? c_amber : c_green, "%s%s  WINNER! caller #%d", label, number, line.callerNumber);
 			} else if (line.outcome == Outcome::NoAnswer) {
-				SetRow(row, c_white, "LINE %d  no contest on, wait", index + 1);
+				SetRow(row, c_grey, "%s%s  no contest on", label, number);
 			} else {
-				SetRow(row, c_green, "LINE %d  ON AIR: you #%d, wants #%d", index + 1, line.callerNumber,
-					   line.callerTarget);
+				SetRow(row, c_green, "%s%s  ON AIR: #%d of #%d", label, number, line.callerNumber, line.callerTarget);
 			}
 			break;
 	}
 }
 
-void PhoneScene::UpdateText(void) {
-	const auto& station = m_sim.CurrentStation();
-	char number[12];
+void PhoneScene::UpdateShop(void) {
+	char cash[12];
+	m_sim.Cash().Format(cash);
+	uint8_t r = SHOP_FIRST_ROW;
+	SetRow(r++, c_amber, "SHOP  $%-12s  SELECT close", cash);
+	for (uint8_t i = 0; i < SHOP_ENTRIES; i++) {
+		char cursor = m_shopSel == i ? '>' : ' ';
+		bool selected = m_shopSel == i;
+		if (i == 0) {
+			int8_t next = m_sim.NextUpgrade();
+			if (next < 0) {
+				SetRow(r++, c_grey, "%c%-15s  all bought", cursor, "Desk");
+			} else {
+				const auto& upgrade = Sim::c_upgrades[next];
+				bool afford = m_sim.Cash() >= BigNum::FromUint(upgrade.price);
+				SetRow(r++, afford ? (selected ? c_amber : c_white) : c_grey, "%c%-15s  $%d", cursor, upgrade.name,
+					   upgrade.price);
+			}
+			continue;
+		}
+		Stat stat = Stat(i - 1);
+		BigNum price = m_sim.StatPrice(stat);
+		const char* name = Sim::c_stats[uint8_t(stat)].name;
+		if (price.IsZero()) {
+			SetRow(r++, c_grey, "%c%-15s Lv%-3d MAX", cursor, name, m_sim.StatLevel(stat));
+		} else {
+			char text[12];
+			price.Format(text);
+			bool afford = m_sim.Cash() >= price;
+			SetRow(r++, afford ? (selected ? c_amber : c_white) : c_grey, "%c%-15s Lv%-3d $%s", cursor, name,
+				   m_sim.StatLevel(stat), text);
+		}
+	}
 
-	// the next goal sits up here so the shop row below is never shared
-	char cash[12], goal[12], target[12], name[6];
-	m_shownCash.Format(cash);
+	// what the money is for next: the next station, else Reputation
+	char goal[12], target[12], name[6];
 	int8_t locked = m_sim.NextLockedStation();
 	BigNum pending = m_sim.PendingRep();
 	if (locked >= 0) {
@@ -595,73 +666,63 @@ void PhoneScene::UpdateText(void) {
 		ShortName(name, next.name);
 		m_sim.RunEarned().Format(goal);
 		BigNum::FromUint(next.unlockAt).Format(target);
-		SetRow(ROW_TITLE, c_amber, "DIALTONE $%-7s %s at $%s/$%s", cash, name, goal, target);
+		SetRow(r++, c_green, "Next station %s at $%s/$%s", name, goal, target);
 	} else if (!pending.IsZero()) {
 		pending.Format(goal);
-		SetRow(ROW_TITLE, (m_flashTimer & 32) ? c_amber : c_green, "DIALTONE $%-7s START: +%s rep", cash, goal);
+		SetRow(r++, c_green, "New area code: +%s rep (START)", goal);
 	} else {
-		SetRow(ROW_TITLE, c_amber, "DIALTONE                 $%s", cash);
+		SetRow(r++, c_green, "");
 	}
+}
 
+void PhoneScene::UpdateText(void) {
+	const auto& station = m_sim.CurrentStation();
+	char number[12], cash[12], name[6];
+	m_shownCash.Format(cash);
 	FormatNumber(number, station.number, NUMBER_LENGTH);
-	SetRow(ROW_STATION, c_white, "RADIO %-12s CALL %s", station.name, number);
-	// the DJ speaks in quotes; no "DJ:" label, a six-digit prize needs the room
+	ShortName(name, station.name);
+	// cash on the left, the number to dial on the right
+	SetRow(ROW_CASH, c_amber, "$%-15s %5s CALL %s", cash, name, number);
+	// the DJ speaks in quotes
 	SetRow(ROW_DJ, c_green, "\"%s\"", m_sim.DJLine());
 
 	if (m_sim.IsRoundOpen()) {
 		bool hurry = m_sim.SecondsLeft() <= 5 && (m_flashTimer & 16);
-		char prize[12];
-		m_sim.Prize().Format(prize);
-		SetRow(ROW_ROUND, hurry ? c_red : c_white, "WANTS #%-2d SO FAR %-2d  $%-7s %2ds", m_sim.CallerTarget(),
-			   m_sim.CallersSoFar(), prize, m_sim.SecondsLeft());
+		SetRow(ROW_CONTEST, hurry ? c_red : c_white, "Caller #%d wins   so far %d   %ds", m_sim.CallerTarget(),
+			   m_sim.CallersSoFar(), m_sim.SecondsLeft());
+	} else if (m_save.Writing()) {
+		SetRow(ROW_CONTEST, c_grey, "Next contest in %ds  saving", m_sim.SecondsLeft());
+	} else if (!m_sim.PendingRep().IsZero() && m_sim.NextLockedStation() < 0) {
+		char gain[12];
+		m_sim.PendingRep().Format(gain);
+		SetRow(ROW_CONTEST, (m_flashTimer & 32) ? c_amber : c_grey, "Next in %ds  START: +%s rep", m_sim.SecondsLeft(),
+			   gain);
 	} else {
-		SetRow(ROW_ROUND, c_grey, "Contest closed, next in %ds%s", m_sim.SecondsLeft(),
-			   m_save.Writing() ? "  SAVING" : "");
+		SetRow(ROW_CONTEST, c_grey, "Next contest in %ds", m_sim.SecondsLeft());
 	}
 
 	for (uint8_t i = 0; i < MAX_LINES; i++) {
 		UpdateLineRow(i);
 	}
 
-	if (m_shopSel == 0) {
-		int8_t next = m_sim.NextUpgrade();
-		if (next < 0) {
-			SetRow(ROW_SHOP, c_grey, "SHOP %d/%d desk complete", 1, SHOP_ENTRIES);
-		} else {
-			const auto& upgrade = Sim::c_upgrades[next];
-			bool afford = m_sim.Cash() >= BigNum::FromUint(upgrade.price);
-			SetRow(ROW_SHOP, afford ? c_amber : c_grey, "SHOP %d/%d %-13s $%d", 1, SHOP_ENTRIES, upgrade.name,
-				   upgrade.price);
-		}
-	} else {
-		Stat stat = Stat(m_shopSel - 1);
-		BigNum price = m_sim.StatPrice(stat);
-		const char* name = Sim::c_stats[uint8_t(stat)].name;
-		if (price.IsZero()) {
-			SetRow(ROW_SHOP, c_grey, "SHOP %d/%d %-13s Lv%d MAX", m_shopSel + 1, SHOP_ENTRIES, name,
-				   m_sim.StatLevel(stat));
-		} else {
-			char text[12];
-			price.Format(text);
-			bool afford = m_sim.Cash() >= price;
-			SetRow(ROW_SHOP, afford ? c_amber : c_grey, "SHOP %d/%d %-13s Lv%d $%s", m_shopSel + 1, SHOP_ENTRIES,
-				   name, m_sim.StatLevel(stat), text);
-		}
+	bool twoLines = m_sim.HasUpgrade(Upgrade::SecondLine);
+	m_rows[ROW_TOAST]->SetPositionSize({.pos = {{.x = 8, .y = twoLines ? TOAST_Y_TWO_LINES : c_rowY[ROW_TOAST]}},
+										.size = {320, 16}});
+	SetRow(ROW_TOAST, c_amber, "%s", m_toastTimer ? m_toast : "");
+
+	if (m_shopOpen) {
+		UpdateShop();
 	}
 
-	SetRow(ROW_TOAST, c_amber, "%s", m_toastTimer ? m_toast : "");
-	SetRow(ROW_HELP, c_grey, "X dial O hang SEL/SQ shop%s%s START", m_sim.HasUpgrade(Upgrade::Redial) ? " TRI" : "",
-		   m_sim.IsStationUnlocked(1) ? " L/R" : "");
-
 	// the middle banner: who you are the moment you get on air, and a win held long enough to see
-	if (m_bannerTimer) {
+	if (m_bannerTimer && !m_shopOpen) {
 		const auto& line = m_sim.GetLine(m_bannerLine);
 		bool blink = m_flashTimer & 8;
 		if (line.outcome == Outcome::Won) {
 			SetRow(ROW_BANNER1, blink ? c_white : c_amber, "    *** YOU WIN!  CALLER #%d ***", line.callerNumber);
 			char won[12];
 			line.prizeWon.Format(won);
-			SetRow(ROW_BANNER2, c_amber, "          +$%s  cash $%s", won, cash);
+			SetRow(ROW_BANNER2, c_amber, "          +$%s", won);
 		} else {
 			SetRow(ROW_BANNER1, c_green, "  ON AIR!  You are caller #%d", line.callerNumber);
 			SetRow(ROW_BANNER2, c_white, "  DJ wants #%d: %s", line.callerTarget,
@@ -670,6 +731,23 @@ void PhoneScene::UpdateText(void) {
 	} else {
 		SetRow(ROW_BANNER1, c_white, "");
 		SetRow(ROW_BANNER2, c_white, "");
+	}
+}
+
+void PhoneScene::DrawKeyDigits(void) {
+	// the camera never moves, but the projection is cheap enough to redo every frame and then it
+	// follows any change to the camera or the layout for free
+	auto& gpu = g_madnightEngine.gpu();
+	psyqo::GTE::writeSafe<psyqo::GTE::PseudoRegister::Rotation>(m_camera.rotationMatrix());
+	psyqo::GTE::writeSafe<psyqo::GTE::PseudoRegister::Translation>(psyqo::Vec3{0, 0, 0});
+	for (uint8_t i = 0; i < KEY_COUNT; i++) {
+		psyqo::Vec3 top = desk::KEYS[i];
+		top.y -= KEY_TOP; // the layout gives the bottom of the cap
+		psyqo::GTE::writeSafe<psyqo::GTE::PseudoRegister::V0>(top - m_camera.pos());
+		psyqo::GTE::Kernels::rtps();
+		psyqo::Vertex screen;
+		psyqo::GTE::read<psyqo::GTE::Register::SXY2>(&screen.packed);
+		m_glyphs.Draw(gpu, c_keys[i / KEYPAD_COLS][i % KEYPAD_COLS], screen, c_ink);
 	}
 }
 
@@ -740,7 +818,7 @@ void PhoneScene::UpdateMenu(void) {
 				   text, price);
 		}
 	}
-	SetRow(r++, c_white, "");
+	SetRow(r++, m_menuSel == MENU_HOWTO ? c_amber : c_grey, "%cHow to play", m_menuSel == MENU_HOWTO ? '>' : ' ');
 
 	static constexpr const char* c_help[MENU_ENTRIES] = {
 		"Resets cash, desk, stats; keeps perks",
@@ -748,6 +826,7 @@ void PhoneScene::UpdateMenu(void) {
 		"Start each area code with more cash",
 		"Start each area code with redial",
 		"Shop prices grow slower per level",
+		"The rules and the buttons again",
 	};
 	if (m_menuSel == 0 && m_menuArmed) {
 		SetRow(r++, (m_flashTimer & 16) ? c_red : c_amber, "Sure? X again to move, O to stay");
@@ -799,6 +878,18 @@ void PhoneScene::frame() {
 			m_wasOnAir[i] = onAir;
 		}
 
+		// a station opening up is news, once
+		int8_t locked = m_sim.NextLockedStation();
+		if (locked != m_lastLocked) {
+			if (m_lastLocked >= 0 && (locked < 0 || locked > m_lastLocked)) {
+				char name[6];
+				ShortName(name, Sim::c_stations[m_lastLocked].name);
+				snprintf(m_toast, sizeof(m_toast), "%s is open: L1/R1 to tune", name);
+				m_toastTimer = 240;
+			}
+			m_lastLocked = locked;
+		}
+
 		// cash counts up rather than jumping, so a win is seen landing
 		const BigNum& cash = m_sim.Cash();
 		if (m_shownCash > cash) {
@@ -830,9 +921,22 @@ void PhoneScene::frame() {
 			UpdateMenu();
 		}
 	} else {
+		DrawKeyDigits();
+		// the bottom band grows with what is in it: line 1, line 2 once bought, a toast while it lasts
+		bool twoLines = m_sim.HasUpgrade(Upgrade::SecondLine);
+		int16_t bottom = c_rowY[ROW_LINE1];
+		if (twoLines) {
+			bottom = c_rowY[ROW_LINE2];
+		}
+		if (m_toastTimer) {
+			bottom = twoLines ? TOAST_Y_TWO_LINES : c_rowY[ROW_TOAST];
+		}
 		DrawBand(0, TOP_BAND_H, c_band);
-		DrawBand(BOTTOM_BAND_Y, 240 - BOTTOM_BAND_Y, c_band);
-		if (m_bannerTimer) {
+		DrawBand(bottom - 4, 240 - (bottom - 4), c_band);
+		if (m_shopOpen) {
+			DrawBand(SHOP_BAND_Y, SHOP_BAND_H, c_band);
+			DrawBand(SHOP_BAND_Y, SHOP_BAND_H, c_band);
+		} else if (m_bannerTimer) {
 			bool won = m_sim.GetLine(m_bannerLine).outcome == Outcome::Won;
 			DrawBand(BANNER_Y, BANNER_H, won ? psyqo::Color{.r = 120, .g = 60, .b = 0} : c_band);
 		}
