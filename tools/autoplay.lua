@@ -33,12 +33,13 @@ for v, b in string.gmatch(os.getenv('SEQ') or '', '(%d+):(%a+%d?)') do seq[tonum
 local noPlan = os.getenv('NOPLAN') == '1'
 local seqHeld = {}
 
+local introAt = tonumber(os.getenv('INTRO_AT') or '100')
 local n, step, held = 0, 1, nil
 listener = PCSX.Events.createEventListener('GPU::Vsync', function()
   n = n + 1
   local pad = PCSX.SIO0.slots[1].pads[1]
-  -- START dismisses the how-to-play card
-  if n == 100 then pad.setOverride(B.Start) elseif n == 106 then pad.clearOverride(B.Start) end
+  -- START dismisses the how-to-play card (INTRO_AT=vsync moves it, to catch the blinking prompt lit)
+  if n == introAt then pad.setOverride(B.Start) elseif n == introAt + 6 then pad.clearOverride(B.Start) end
   if seq[n] then pad.setOverride(B[seq[n]]); seqHeld[n + 6] = seq[n]; print('PRESS ' .. n .. ' ' .. seq[n]) end
   if seqHeld[n] then pad.clearOverride(B[seqHeld[n]]); seqHeld[n] = nil end
   if n > 120 and n % 10 == 0 and not (buyOnly and n > 120 + 40 * #plan) and not noPlan then
