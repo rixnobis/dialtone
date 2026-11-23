@@ -34,14 +34,24 @@ const eastl::array<UpgradeInfo, size_t(Upgrade::Count)> Sim::c_upgrades = {{
 	{.name = "Autodialer", .price = 120},
 }};
 
+const eastl::array<StatInfo, size_t(Stat::Count)> Sim::c_stats = {{
+	{.name = "Quick fingers", .prices = {20, 45, 90, 160, 260}},
+	{.name = "Luck", .prices = {30, 60, 110, 190, 300}},
+	{.name = "Charm", .prices = {25, 55, 100, 170, 280}},
+}};
+
 static constexpr const char* c_rivals[] = {"Dana", "Mo", "Big Steve", "Ines", "Kev", "Pat", "Ruth", "Ozzie"};
-static constexpr uint8_t AUTO_DIGIT_TICKS = 4;		 // redial and autodialer speed
+static constexpr uint8_t AUTO_DIGIT_TICKS = 6;		 // redial and autodialer speed, quick fingers takes 1 off per level
+static constexpr uint8_t CONNECT_TICKS = 30;		 // after the last digit, before it rings; quick fingers takes 5 off
+static constexpr uint8_t LUCK_BUSY_STEP = 6;		 // busy chance off per luck level
+static constexpr uint8_t LUCK_BUSY_FLOOR = 10;		 // the station is never always free
+static constexpr uint8_t CHARM_PRIZE_STEP = 15;		 // percent on the prize per charm level
 static constexpr uint16_t AUTODIAL_IDLE_TICKS = 20;	 // leave a free line alone this long before grabbing it
 static constexpr uint16_t INTERMISSION_TICKS = 3 * TICKS_PER_SECOND;
 static constexpr uint16_t BUSY_TICKS = 75;
 static constexpr uint16_t ON_AIR_TICKS = 100;
 static constexpr uint8_t JAMMED_EXTRA_BUSY = 15; // everyone piles on when the winner is close
-static constexpr uint32_t CONSOLATION = 1;
+static constexpr uint32_t CONSOLATION = 1; // charm adds 1 per level
 #ifndef DIALTONE_START_CASH
 #define DIALTONE_START_CASH 0 // `make DEFINES=-DDIALTONE_START_CASH=500` to try the upgrades
 #endif
@@ -72,9 +82,10 @@ void Sim::StartRound(void) {
 	m_roundTimer = station.roundSeconds * TICKS_PER_SECOND;
 	m_callerTarget = RandRange(station.callerMin, station.callerMax);
 	m_callersSoFar = 0;
-	m_prize = RandRange(station.prizeMin, station.prizeMax) + m_rollover;
+	m_prize = RandRange(station.prizeMin, station.prizeMax) * PrizePercent() / 100 + m_rollover;
 	m_rollover = 0;
 	SetDJ("Caller %d wins $%d! Lines open!", m_callerTarget, m_prize);
+	printf("DIALTONE: round caller=%d prize=%d charm=%d\n", m_callerTarget, m_prize, StatLevel(Stat::Charm));
 }
 
 void Sim::EndRound(void) {
@@ -131,17 +142,24 @@ void Sim::TickLine(uint8_t index) {
 			break;
 
 		case LineState::Dialing:
+			if (line.digitCount == NUMBER_LENGTH) {
+				// all digits in, the exchange is putting the call through
+				if (line.timer == 0 || --line.timer == 0) {
+					FinishDialing(index);
+				}
+				break;
+			}
 			if (!line.autoDialing) {
 				break;
 			}
-			if (++line.timer >= AUTO_DIGIT_TICKS) {
+			if (++line.timer >= AutoDigitTicks()) {
 				line.timer = 0;
 				char digit = CurrentStation().number[line.digitCount];
 				line.digits[line.digitCount++] = digit;
 				line.digits[line.digitCount] = 0;
 				m_listener->OnDigit(index, digit);
 				if (line.digitCount == NUMBER_LENGTH) {
-					FinishDialing(index);
+					line.timer = ConnectTicks();
 				}
 			}
 			break;
@@ -208,10 +226,11 @@ void Sim::FinishDialing(uint8_t index) {
 		return;
 	}
 
-	uint8_t busyChance = CurrentStation().busyPercent;
+	uint8_t busyChance = BusyPercent();
 	if (m_roundOpen && m_callersSoFar + 2 >= m_callerTarget) {
 		busyChance += JAMMED_EXTRA_BUSY;
 	}
+	printf("DIALTONE: call line=%d busy=%d%% luck=%d\n", index, busyChance, StatLevel(Stat::Luck));
 
 	if (m_rand->rand(100) < busyChance) {
 		line.state = LineState::Busy;
@@ -247,10 +266,10 @@ void Sim::ConnectToDJ(uint8_t index) {
 	} else {
 		// a consolation prize for every caller who gets on air, so a bad run still pays a little
 		line.outcome = Outcome::Missed;
-		line.prizeWon = CONSOLATION;
-		m_cash += CONSOLATION;
-		m_lifetime += CONSOLATION;
-		SetDJ("Caller %d! Not this time, have $%d.", m_callersSoFar, CONSOLATION);
+		line.prizeWon = Consolation();
+		m_cash += line.prizeWon;
+		m_lifetime += line.prizeWon;
+		SetDJ("Caller %d! Not this time, have $%d.", m_callersSoFar, line.prizeWon);
 	}
 }
 
@@ -268,7 +287,7 @@ void Sim::PressDigit(char digit) {
 	line.digits[line.digitCount] = 0;
 	m_listener->OnDigit(m_handLine, digit);
 	if (line.digitCount == NUMBER_LENGTH) {
-		FinishDialing(m_handLine);
+		line.timer = ConnectTicks();
 		m_handLine = -1;
 	}
 }
@@ -318,6 +337,34 @@ bool Sim::BuyNextUpgrade(void) {
 	}
 	return true;
 }
+
+uint32_t Sim::StatPrice(Stat stat) const {
+	uint8_t level = StatLevel(stat);
+	return level < STAT_MAX_LEVEL ? c_stats[uint8_t(stat)].prices[level] : 0;
+}
+
+bool Sim::BuyStat(Stat stat) {
+	uint32_t price = StatPrice(stat);
+	if (price == 0 || m_cash < price) {
+		return false;
+	}
+	m_cash -= price;
+	m_statLevel[uint8_t(stat)]++;
+	return true;
+}
+
+uint8_t Sim::AutoDigitTicks(void) const { return AUTO_DIGIT_TICKS - StatLevel(Stat::QuickFingers); }
+
+uint8_t Sim::ConnectTicks(void) const { return CONNECT_TICKS - 5 * StatLevel(Stat::QuickFingers); }
+
+uint8_t Sim::BusyPercent(void) const {
+	int16_t busy = int16_t(CurrentStation().busyPercent) - LUCK_BUSY_STEP * StatLevel(Stat::Luck);
+	return busy < LUCK_BUSY_FLOOR ? LUCK_BUSY_FLOOR : busy;
+}
+
+uint32_t Sim::Consolation(void) const { return CONSOLATION + StatLevel(Stat::Charm); }
+
+uint16_t Sim::PrizePercent(void) const { return 100 + CHARM_PRIZE_STEP * StatLevel(Stat::Charm); }
 
 void Sim::TuneStation(int8_t direction) {
 	int8_t next = int8_t(m_station) + direction;

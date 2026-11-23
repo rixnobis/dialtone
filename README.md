@@ -3,16 +3,24 @@
 A proof of concept for an incremental PS1 game about phoning in to radio contests. You sit at a
 desk with a landline and a radio. The DJ says "caller 5 wins $20", you dial the station, and if
 you get through as the fifth caller the money is yours. Spend it on a redial button, a second
-line, and an autodialer that keeps both lines busy without you. A bigger station tunes in once
-you have earned $200.
+line, and an autodialer that keeps both lines busy without you, or on three levelled stats:
+
+- Quick fingers (5 levels, $20 to $260): faster dialing. Redial and the autodialer go from 6 to 1
+  frames per digit, and the wait after the last digit drops from 30 to 5 frames.
+- Luck (5 levels, $30 to $300): 6 points off the busy chance per level, never below 10%.
+- Charm (5 levels, $25 to $280): prizes +15% per level, and $1 more for every call that gets on
+  air without winning.
+
+A bigger station tunes in once you have earned $200.
 
 Built on [psyqo-madnight-engine](https://github.com/Forceh91/psyqo-madnight-engine), pulled in
 as a submodule and not modified.
 
 ## Controls
 
-D-pad moves over the keypad, X dials the key, O hangs up, triangle redials, square buys the next
-upgrade, L1/R1 change station.
+D-pad moves over the keypad, X dials the key, O hangs up, triangle redials, L1/R1 change station.
+Select steps through the shop (the next desk item, then the three stats) and square buys what it
+shows.
 
 ## Building
 

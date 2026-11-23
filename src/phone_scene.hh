@@ -63,7 +63,10 @@ class PhoneScene final : public psyqo::Scene, public SimListener {
 	psyqo::Fragments::SimpleFragment<psyqo::Prim::Rectangle> m_bands[2][2];
 	uint8_t m_bandCount = 0;
 
+	bool BuyShopItem(void);
+
 	uint8_t m_cursorX = 0, m_cursorY = 0;
+	uint8_t m_shopSel = 0; // 0 = the next desk item, then one entry per Stat
 	char m_lastKey = 0;
 	uint8_t m_keyFlash = 0;
 	uint16_t m_flashTimer = 0; // blinks whatever wants attention

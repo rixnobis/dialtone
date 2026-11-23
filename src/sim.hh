@@ -46,6 +46,15 @@ struct UpgradeInfo {
 	uint32_t price;
 };
 
+// levelled upgrades: not desk objects, they change the numbers
+enum class Stat : uint8_t { QuickFingers, Luck, Charm, Count };
+static constexpr uint8_t STAT_MAX_LEVEL = 5;
+
+struct StatInfo {
+	const char* name;
+	uint32_t prices[STAT_MAX_LEVEL]; // price of level 1, 2, ...
+};
+
 // sound cues the sim asks for, the scene maps them to the SPU
 class SimListener {
   public:
@@ -60,6 +69,7 @@ class Sim final {
   public:
 	static const eastl::array<Station, STATION_COUNT> c_stations;
 	static const eastl::array<UpgradeInfo, size_t(Upgrade::Count)> c_upgrades;
+	static const eastl::array<StatInfo, size_t(Stat::Count)> c_stats;
 
 	void Init(Rand* rand, SimListener* listener);
 	void Tick(uint32_t ticks);
@@ -69,6 +79,7 @@ class Sim final {
 	void HangUp(void);
 	void Redial(void);
 	bool BuyNextUpgrade(void);
+	bool BuyStat(Stat stat);
 	void TuneStation(int8_t direction);
 
 	// state for the ui
@@ -80,6 +91,14 @@ class Sim final {
 	bool IsStationUnlocked(uint8_t index) const { return m_lifetime >= c_stations[index].unlockAt; }
 	bool HasUpgrade(Upgrade upgrade) const { return m_upgrades & (1 << uint8_t(upgrade)); }
 	int8_t NextUpgrade(void) const;
+	uint8_t StatLevel(Stat stat) const { return m_statLevel[uint8_t(stat)]; }
+	uint32_t StatPrice(Stat stat) const; // 0 once maxed
+	// what the stats currently do, for the shop text
+	uint8_t AutoDigitTicks(void) const;
+	uint8_t ConnectTicks(void) const;
+	uint8_t BusyPercent(void) const; // before the jam near the end of a round
+	uint32_t Consolation(void) const;
+	uint16_t PrizePercent(void) const;
 	const Line& GetLine(uint8_t index) const { return m_lines[index]; }
 	int8_t HandLine(void) const { return m_handLine; }
 
@@ -108,6 +127,7 @@ class Sim final {
 	uint32_t m_lifetime = 0;
 	uint32_t m_wins = 0;
 	uint8_t m_upgrades = 0;
+	uint8_t m_statLevel[uint8_t(Stat::Count)] = {0};
 	uint8_t m_station = 0;
 
 	eastl::array<Line, MAX_LINES> m_lines;

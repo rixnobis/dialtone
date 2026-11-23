@@ -33,6 +33,8 @@ static constexpr psyqo::Vec3 c_lookAt = {0.3_ws, -0.2_ws, 0.85_ws};
 static constexpr uint16_t DESK_PROJECTION = 150;
 static constexpr psyqo::FixedPoint<> HANDSET_LIFT = 0.45_ws;
 
+static constexpr uint8_t SHOP_ENTRIES = 1 + uint8_t(Stat::Count);
+
 enum TextRow : uint8_t { ROW_TITLE, ROW_STATION, ROW_DJ, ROW_ROUND, ROW_LINE1, ROW_LINE2, ROW_SHOP, ROW_HELP, ROW_COUNT };
 static constexpr int16_t c_rowY[ROW_COUNT] = {4, 20, 36, 52, 178, 194, 210, 226};
 
@@ -199,15 +201,12 @@ void PhoneScene::HandleButton(psyqo::AdvancedPad::Button button) {
 		case Button::Triangle:
 			m_sim.Redial();
 			break;
-		case Button::Square: {
-			int8_t next = m_sim.NextUpgrade();
-			if (next >= 0 && m_sim.BuyNextUpgrade()) {
-				snprintf(m_toast, sizeof(m_toast), "Bought: %s!", Sim::c_upgrades[next].name);
-				printf("DIALTONE: bought %s cash=%d\n", Sim::c_upgrades[next].name, m_sim.Cash());
-				m_toastTimer = 120;
-			}
+		case Button::Square:
+			BuyShopItem();
 			break;
-		}
+		case Button::Select:
+			m_shopSel = (m_shopSel + 1) % SHOP_ENTRIES;
+			break;
 		case Button::L1:
 			m_sim.TuneStation(-1);
 			break;
@@ -217,6 +216,40 @@ void PhoneScene::HandleButton(psyqo::AdvancedPad::Button button) {
 		default:
 			break;
 	}
+}
+
+bool PhoneScene::BuyShopItem(void) {
+	if (m_shopSel == 0) {
+		int8_t next = m_sim.NextUpgrade();
+		if (next < 0 || !m_sim.BuyNextUpgrade()) {
+			return false;
+		}
+		snprintf(m_toast, sizeof(m_toast), "Bought: %s!", Sim::c_upgrades[next].name);
+		printf("DIALTONE: bought %s cash=%d\n", Sim::c_upgrades[next].name, m_sim.Cash());
+	} else {
+		Stat stat = Stat(m_shopSel - 1);
+		if (!m_sim.BuyStat(stat)) {
+			return false;
+		}
+		uint8_t level = m_sim.StatLevel(stat);
+		switch (stat) {
+			case Stat::QuickFingers:
+				snprintf(m_toast, sizeof(m_toast), "Quick fingers %d: dialing is faster", level);
+				break;
+			case Stat::Luck:
+				snprintf(m_toast, sizeof(m_toast), "Luck %d: busy %d%% of the time", level, m_sim.BusyPercent());
+				break;
+			default:
+				snprintf(m_toast, sizeof(m_toast), "Charm %d: prizes +%d%%, $%d a call", level,
+						 m_sim.PrizePercent() - 100, m_sim.Consolation());
+				break;
+		}
+		printf("DIALTONE: bought %s lv%d cash=%d digit=%d connect=%d busy=%d%% prize=%d%% consolation=%d\n",
+			   Sim::c_stats[uint8_t(stat)].name, level, m_sim.Cash(), m_sim.AutoDigitTicks(), m_sim.ConnectTicks(),
+			   m_sim.BusyPercent(), m_sim.PrizePercent(), m_sim.Consolation());
+	}
+	m_toastTimer = 120;
+	return true;
 }
 
 void PhoneScene::OnDigit(uint8_t line, char digit) {
@@ -304,7 +337,11 @@ void PhoneScene::UpdateText(void) {
 				}
 				break;
 			case LineState::Dialing:
-				SetRow(row, c_white, "LINE %d  %-12s %s", i + 1, line.autoDialing ? "auto-dialing" : "dialing", number);
+				SetRow(row, c_white, "LINE %d  %-12s %s", i + 1,
+					   line.digitCount == NUMBER_LENGTH ? "connecting"
+					   : line.autoDialing				? "auto-dialing"
+														: "dialing",
+					   number);
 				break;
 			case LineState::Ringing:
 				SetRow(row, blink ? c_amber : c_white, "LINE %d  ringing...   %s", i + 1, number);
@@ -325,16 +362,30 @@ void PhoneScene::UpdateText(void) {
 		}
 	}
 
-	int8_t next = m_sim.NextUpgrade();
 	if (!m_sim.IsStationUnlocked(1) && (m_flashTimer & 256)) {
 		// takes turns with the shop
 		SetRow(ROW_SHOP, c_grey, "WHOT 104.7 tunes in at $%d earned", Sim::c_stations[1].unlockAt);
-	} else if (next < 0) {
-		SetRow(ROW_SHOP, c_grey, "Shop sold out. The phone does the work.");
+	} else if (m_shopSel == 0) {
+		int8_t next = m_sim.NextUpgrade();
+		if (next < 0) {
+			SetRow(ROW_SHOP, c_grey, "SEL %d/%d desk complete", 1, SHOP_ENTRIES);
+		} else {
+			const auto& upgrade = Sim::c_upgrades[next];
+			bool afford = m_sim.Cash() >= upgrade.price;
+			SetRow(ROW_SHOP, afford ? c_amber : c_grey, "SEL %d/%d %-13s desk $%-4d SQ buy", 1, SHOP_ENTRIES,
+				   upgrade.name, upgrade.price);
+		}
 	} else {
-		const auto& upgrade = Sim::c_upgrades[next];
-		bool afford = m_sim.Cash() >= upgrade.price;
-		SetRow(ROW_SHOP, afford ? c_amber : c_grey, "SQUARE buys %s  $%d", upgrade.name, upgrade.price);
+		Stat stat = Stat(m_shopSel - 1);
+		uint32_t price = m_sim.StatPrice(stat);
+		const char* name = Sim::c_stats[uint8_t(stat)].name;
+		if (price == 0) {
+			SetRow(ROW_SHOP, c_grey, "SEL %d/%d %-13s Lv%d MAX", m_shopSel + 1, SHOP_ENTRIES, name, STAT_MAX_LEVEL);
+		} else {
+			bool afford = m_sim.Cash() >= price;
+			SetRow(ROW_SHOP, afford ? c_amber : c_grey, "SEL %d/%d %-13s Lv%d $%-4d SQ buy", m_shopSel + 1,
+				   SHOP_ENTRIES, name, m_sim.StatLevel(stat), price);
+		}
 	}
 
 	if (m_toastTimer) {

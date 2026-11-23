@@ -1,8 +1,8 @@
--- Plays dialtone with the pad: dials the first station by hand, presses redial and buy,
+-- Plays dialtone with the pad: dials the first station by hand, presses redial and buy, cycles the shop,
 -- tunes up once it can. Screenshots at the vsyncs listed in SHOTS (comma separated) into SHOTDIR,
 -- quits at QUIT_AT.
 -- pcsx-redux -run -lua_stdout -dofile tools/autoplay.lua -loadexe dialtone.ps-exe
-local B = { Up = 4, Right = 5, Down = 6, Left = 7, L1 = 10, R1 = 11, Tri = 12, Circle = 13, Cross = 14, Square = 15 }
+local B = { Select = 0, Up = 4, Right = 5, Down = 6, Left = 7, L1 = 10, R1 = 11, Tri = 12, Circle = 13, Cross = 14, Square = 15 }
 local shotdir = os.getenv('SHOTDIR') or '.'
 local quitAt = tonumber(os.getenv('QUIT_AT') or '18000')
 local shots = {}
@@ -14,7 +14,10 @@ local dial = { 'Right', 'Down', 'Cross', 'Cross', 'Cross', 'Down', 'Down', 'Cros
   'Up', 'Up', 'Left' }
 local plan = {}
 for _, b in ipairs(dial) do table.insert(plan, b) end
-for _ = 1, 6 do table.insert(plan, 'Tri'); table.insert(plan, 'Square') end
+-- redial and buy, and every other pass step the shop cursor on so the stats get bought too
+for _ = 1, 4 do
+  for _, b in ipairs({ 'Tri', 'Square', 'Tri', 'Square', 'Select' }) do table.insert(plan, b) end
+end
 
 -- BUY_ONLY=1: press Square a few times, then leave the pad alone (the autodialer test)
 local buyOnly = os.getenv('BUY_ONLY') == '1'
