@@ -14,7 +14,20 @@ import os
 import bmesh
 import bpy
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+def script_path():
+    # run with -P, __file__ is the script; run from the Text Editor, it is only the text's name,
+    # so take the path the text was opened from
+    p = os.path.abspath(__file__)
+    if os.path.isfile(p):
+        return p
+    for t in bpy.data.texts:
+        path = bpy.path.abspath(t.filepath) if t.filepath else ""
+        if os.path.basename(path) == "build_desk.py" and os.path.isfile(path):
+            return path
+    raise SystemExit("open tools/build_desk.py from the repo in the Text Editor (Text > Open), then Run Script")
+
+
+HERE = os.path.dirname(script_path())
 ROOT = os.path.dirname(HERE)
 OBJ_DIR = os.path.join(ROOT, "build", "obj")
 BLEND = os.path.join(ROOT, "blender", "desk.blend")
@@ -40,7 +53,15 @@ layout = {}
 
 
 def reset():
-    bpy.ops.wm.read_factory_settings(use_empty=True)
+    if bpy.app.background and not os.environ.get("DESK_SOFT_RESET"):
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+        return
+    # inside the Blender UI a factory reset would also reset the user's preferences, so only
+    # clear what this script builds: every object and mesh in the open file
+    for o in list(bpy.data.objects):
+        bpy.data.objects.remove(o)
+    for m in list(bpy.data.meshes):
+        bpy.data.meshes.remove(m)
 
 
 def new_object(name, bm):
