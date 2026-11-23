@@ -13,17 +13,21 @@ move to a new area code and start over with a reputation.
 | --- | --- |
 | D-pad | move over the keypad |
 | X | dial the key under the cursor |
-| O | hang up every line that is dialing, ringing or busy |
+| O | take back the last digit you dialed |
+| L2 or R2 | hang up every line that is dialing, ringing or busy |
 | Triangle | redial the station (once you own the redial button) |
-| Select | step through the shop |
-| Square | buy what the shop row shows |
+| Select | open and close the shop |
 | L1 / R1 | tune the radio down / up (stations you have opened) |
 | START | the Reputation screen; it also closes the how-to-play card |
 
+The screen shows no button hints while you play; the card above has them, and "How to play" on
+the Reputation screen brings it back.
+
 ## A contest
 
-The top of the screen is the radio. `WANTS #6  SO FAR 2  $16  19s` means the DJ wants caller
-6, two people have got through, the prize is $16 and the contest closes in 19 seconds. Other
+The top of the screen is the radio. The first row is your cash and the number to call, the second
+is the DJ (who says the prize), and `Caller #6 wins   so far 2   19s` means the DJ wants caller 6,
+two people have got through and the contest closes in 19 seconds. Other
 listeners call in too, and every one of them who gets through moves the count on. If one of them
 reaches the number, they win and the contest closes. If nobody does before the clock runs out,
 the prize rolls over into the next contest. After a few seconds' break a new contest opens with a
@@ -31,8 +35,9 @@ new number.
 
 ![Dialing the station](img/dialing.png)
 
-Dial the station's number (it is on the second row) on the keypad. After the seventh digit the
-call connects, then it either rings or comes back busy. A ringing call reaches the DJ after a
+Dial the station's number (top right) on the keypad; the number you are dialing shows at the
+bottom. A wrong digit is not a lost call: O takes it back. After the seventh digit the call
+connects, then it either rings or comes back busy. A ringing call reaches the DJ after a
 second or two and you go on air as the next caller:
 
 - the right caller: you win the prize, and the banner says so;
@@ -49,27 +54,28 @@ the number. When the count is two short of it, everybody piles on and the lines 
 
 ## Your lines
 
-The two rows at the bottom say what each line is doing:
+The bottom row is your line: the number as you dial it, and a word on what it is doing. Once you
+own the second line it gets a row too, above the first, and each row starts with its line number.
 
 | Row says | Means |
 | --- | --- |
-| not bought yet | line 2 before you buy the second line |
-| free: dial the station now | idle, and a contest is open |
-| dialing / auto-dialing | digits going in, by you or by redial and the autodialer |
+| `___-____` | free (white while a contest is open) |
+| `555-01__` | digits going in; `auto-dialing` when redial or the autodialer is at it |
 | connecting | all seven digits in, the exchange is putting you through |
-| ringing the DJ... | you got a line, you will be on air in a moment |
-| BUSY | the station is engaged; hang up or wait and dial again |
-| WRONG NUMBER | a digit was wrong; the row after it shows the right number |
-| ON AIR: you #3, wants #6 | you are on air as caller 3, too early |
+| ringing... | you got a line, you will be on air in a moment |
+| BUSY | the station is engaged; wait for the tone to end and dial again |
+| WRONG NUMBER | a digit was wrong; check the number at the top |
+| ON AIR: #3 of #6 | you are on air as caller 3, the DJ wants 6: too early |
 | WINNER! | you were the one |
-| was busy: dial again | the last try was busy |
+| was busy, dial again | the last try was busy |
 | you #5, DJ wanted #6 | how close the last try came |
-| too late, contest over | you got through after the contest closed |
+| too late | you got through after the contest closed |
 
 ## The shop
 
-The shop row shows one thing at a time; Select steps to the next and Square buys it. The row is
-amber when you can afford it and grey when you cannot.
+Select opens the shop over the middle of the screen; the contest goes on behind it. Up and down
+pick, X or Square buys, Select or O closes it. A line is white or amber when you can afford it and
+grey when you cannot. The bottom line of the panel says what to save up for next.
 
 ![The shop and a stat toast](img/shop.png)
 
@@ -120,8 +126,8 @@ level 7 one, with Quick fingers and Luck at 5, won seven times.
 ## Stations
 
 The radio has four stations, each a wall: much bigger prizes, much bigger crowds. A station opens
-once you have earned enough in the current area code; the top row shows the next one and how far
-you are.
+once you have earned enough in the current area code; the shop shows the next one and how far you
+are, and a message says when one opens.
 
 | Station | Reach | Number | Prize | Wants caller | Busy | Opens at |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -147,8 +153,8 @@ down. That is 1 point at $20,000, 4 at $320,000, 10 at $2 million and 100 at $20
 **New area code** asks twice, then pays out the points you have earned since the last move. The
 game stays paused on the Reputation screen so you can spend them; **Start in the new area code**
 (or START) then starts you over: cash, desk items, upgrades and station go back to the beginning.
-Reputation, perks and all-time earnings stay. The top row tells you when a move would pay
-(`START: +10 rep`).
+Reputation, perks and all-time earnings stay. Once every station is open, the
+contest row says between contests when a move would pay (`START: +10 rep`), and so does the shop.
 
 Reputation buys perks, and perks are kept forever:
 
@@ -172,7 +178,7 @@ boot and saves:
 - at the next break after you buy a perk.
 
 The memory card has the controller to itself while it writes, about three seconds, which is why
-saves wait for the break between contests; the round row says `SAVING` while it happens. The
+saves wait for the break between contests; the contest row says `saving` while it happens. The
 Reputation screen says when the last save was.
 
 With no card, an unformatted card or a damaged save, the game says so at boot and plays on without

@@ -57,8 +57,9 @@ static constexpr uint8_t ROW_COUNT = ROW_INTRO + INTRO_ROWS;
 // The toast row moves up above line 2 once there is one
 static constexpr int16_t c_rowY[ROW_INTRO] = {12, 28, 44, 208, 192, 192, 98, 114};
 static constexpr int16_t TOAST_Y_TWO_LINES = 176;
-static constexpr uint8_t SHOP_FIRST_ROW = ROW_INTRO + 4, SHOP_ROWS = 6; // y 76..156
-static constexpr int16_t SHOP_BAND_Y = 72, SHOP_BAND_H = 104;
+// a title, one row per entry and the next goal: y 60..156, clear of the toast at 176
+static constexpr uint8_t SHOP_FIRST_ROW = ROW_INTRO + 3;
+static constexpr int16_t SHOP_BAND_Y = 58, SHOP_BAND_H = 116;
 
 static constexpr int16_t TOP_BAND_H = 64, BANNER_Y = 92, BANNER_H = 42;
 static constexpr psyqo::Color c_ink = {.r = 40, .g = 20, .b = 12};
@@ -562,7 +563,9 @@ void PhoneScene::UpdateLineRow(uint8_t index) {
 	uint8_t row = index == 0 ? ROW_LINE1 : ROW_LINE2;
 	bool blink = m_flashTimer & 16;
 	char number[12];
-	FormatNumber(number, line.digits, line.digitCount);
+	// a line put down shows a blank number, whatever was half dialed on it
+	bool blank = line.state == LineState::Idle && line.outcome == Outcome::None;
+	FormatNumber(number, line.digits, blank ? 0 : line.digitCount);
 	// with one phone the number speaks for itself; with two, say which line
 	char label[4] = "";
 	if (m_sim.HasUpgrade(Upgrade::SecondLine)) {
@@ -921,7 +924,9 @@ void PhoneScene::frame() {
 			UpdateMenu();
 		}
 	} else {
-		DrawKeyDigits();
+		if (!m_shopOpen) {
+			DrawKeyDigits();
+		}
 		// the bottom band grows with what is in it: line 1, line 2 once bought, a toast while it lasts
 		bool twoLines = m_sim.HasUpgrade(Upgrade::SecondLine);
 		int16_t bottom = c_rowY[ROW_LINE1];
