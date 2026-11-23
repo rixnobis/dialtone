@@ -51,9 +51,10 @@ enum TextRow : uint8_t {
 };
 static constexpr uint8_t INTRO_ROWS = 13;
 static constexpr uint8_t ROW_COUNT = ROW_INTRO + INTRO_ROWS;
-static constexpr int16_t c_rowY[ROW_INTRO] = {4, 20, 36, 52, 160, 176, 192, 208, 224, 98, 114};
+// rows stay within lines 12-224: TVs and emulators that crop overscan hide the top and bottom 8
+static constexpr int16_t c_rowY[ROW_INTRO] = {12, 28, 44, 60, 144, 160, 176, 192, 208, 98, 114};
 
-static constexpr int16_t TOP_BAND_H = 70, BOTTOM_BAND_Y = 156, BANNER_Y = 92, BANNER_H = 42;
+static constexpr int16_t TOP_BAND_H = 80, BOTTOM_BAND_Y = 140, BANNER_Y = 92, BANNER_H = 42;
 static constexpr uint16_t WIN_BANNER_TICKS = 150;
 // the card has the pad bus to itself while it writes (about 3 s in Redux), so the autosave waits for
 // the break between contests once it is due
