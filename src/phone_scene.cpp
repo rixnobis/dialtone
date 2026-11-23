@@ -276,6 +276,17 @@ void PhoneScene::RemoveDeskUpgrades(void) {
 	m_lampLine2Mesh = m_lampAutoMesh = 0;
 }
 
+void PhoneScene::StartAreaCode(void) {
+	m_sim.StartAreaCode();
+	RemoveDeskUpgrades();
+	m_shownCash = m_sim.Cash();
+	m_bannerTimer = 0;
+	m_moving = false;
+	m_save.Save(m_sim, m_playSeconds);
+	m_nextSaveAt = m_playSeconds + AUTOSAVE_SECONDS;
+	printf("DIALTONE: area code #%d started\n", m_sim.AreaCodes());
+}
+
 void PhoneScene::ClearOverlay(void) {
 	for (uint8_t i = 0; i < INTRO_ROWS; i++) {
 		m_rows[ROW_INTRO + i]->SetDisplayText("");
@@ -295,13 +306,21 @@ void PhoneScene::HandleMenuButton(psyqo::AdvancedPad::Button button) {
 			break;
 		case Button::Start:
 		case Button::Circle:
+			if (m_moving) {
+				StartAreaCode();
+			}
 			m_menu = false;
 			m_menuArmed = false;
 			ClearOverlay();
 			printf("DIALTONE: menu closed\n");
 			break;
 		case Button::Cross:
-			if (m_menuSel == 0) {
+			if (m_menuSel == 0 && m_moving) {
+				StartAreaCode();
+				m_menu = false;
+				ClearOverlay();
+				printf("DIALTONE: menu closed\n");
+			} else if (m_menuSel == 0) {
 				if (m_sim.PendingRep().IsZero()) {
 					break;
 				}
@@ -311,16 +330,15 @@ void PhoneScene::HandleMenuButton(psyqo::AdvancedPad::Button button) {
 				}
 				char gain[12];
 				m_sim.PendingRep().Format(gain);
+				// pay the Reputation now, start the new run when the player leaves the menu, so the
+				// perks bought in between (Head start, Speed dial) apply to it
 				m_sim.NewAreaCode();
-				RemoveDeskUpgrades();
-				m_shownCash = m_sim.Cash();
-				m_bannerTimer = 0;
+				m_moving = true;
 				m_menuArmed = false;
+				m_menuSel = 1;
 				char rep[12];
 				m_sim.Reputation().Format(rep);
 				printf("DIALTONE: new area code #%d +%s rep, rep=%s\n", m_sim.AreaCodes(), gain, rep);
-				m_save.Save(m_sim, m_playSeconds);
-				m_nextSaveAt = m_playSeconds + AUTOSAVE_SECONDS;
 			} else {
 				Perk perk = Perk(m_menuSel - 1);
 				if (m_sim.BuyPerk(perk)) {
@@ -683,7 +701,9 @@ void PhoneScene::UpdateMenu(void) {
 
 	BigNum pending = m_sim.PendingRep();
 	char cursor = m_menuSel == 0 ? '>' : ' ';
-	if (pending.IsZero()) {
+	if (m_moving) {
+		SetRow(r++, m_menuSel == 0 ? c_amber : c_white, "%cStart in the new area code", cursor);
+	} else if (pending.IsZero()) {
 		m_sim.NextRepAt().Format(gain);
 		SetRow(r++, m_menuSel == 0 ? c_white : c_grey, "%cNew area code: at $%s all-time", cursor, gain);
 	} else {
@@ -731,6 +751,8 @@ void PhoneScene::UpdateMenu(void) {
 	};
 	if (m_menuSel == 0 && m_menuArmed) {
 		SetRow(r++, (m_flashTimer & 16) ? c_red : c_amber, "Sure? X again to move, O to stay");
+	} else if (m_moving && m_menuSel == 0) {
+		SetRow(r++, c_green, "Spend your Reputation first, then go");
 	} else {
 		SetRow(r++, c_green, "%s", c_help[m_menuSel]);
 	}
@@ -746,7 +768,7 @@ void PhoneScene::UpdateMenu(void) {
 	} else {
 		SetRow(r++, c_grey, "No memory card in slot 1: not saving");
 	}
-	SetRow(r++, c_grey, "UP/DOWN pick   X buy   START back");
+	SetRow(r++, c_grey, m_moving ? "UP/DOWN pick   X buy   START go" : "UP/DOWN pick   X buy   START back");
 }
 
 void PhoneScene::frame() {

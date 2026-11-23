@@ -114,8 +114,10 @@ class Sim final {
 	bool BuyStat(Stat stat);
 	bool BuyPerk(Perk perk);
 	void TuneStation(int8_t direction);
-	// prestige: Reputation for all-time earnings, then cash, desk, stats and station start over
+	// prestige, in two steps so perks bought in between apply to the new run: NewAreaCode pays the
+	// Reputation and hangs up, StartAreaCode then resets cash, desk, stats and station
 	bool NewAreaCode(void);
+	void StartAreaCode(void);
 
 	void Save(SimSave& out) const;
 	void Load(const SimSave& in);

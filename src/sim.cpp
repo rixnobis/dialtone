@@ -77,7 +77,7 @@ static constexpr uint8_t AUTO_DIGIT_TICKS = 6;		 // redial and autodialer speed,
 static constexpr uint8_t CONNECT_TICKS = 30;		 // after the last digit, before it rings; quick fingers takes 5 off
 static constexpr uint8_t LUCK_BUSY_STEP = 6;		 // busy chance off per luck level
 static constexpr uint8_t LUCK_BUSY_FLOOR = 10;		 // the station is never always free
-static constexpr uint16_t CHARM_MILLI = 1100;		 // prize x1.1 per charm level
+static constexpr uint32_t CHARM_STEP_MILLI = 250; // prize +25% of base per charm level, added, not compounded
 static constexpr uint16_t GROWTH_MILLI = 1150;		 // stat prices x1.15 per level...
 static constexpr uint16_t HAGGLER_MILLI = 10;		 // ...minus 0.01 per Haggler level, so 1.10 at the cap
 static constexpr uint16_t CONSOLATION_MILLI = 50;	 // 5% of the round's prize to everyone who gets on air
@@ -490,9 +490,12 @@ bool Sim::NewAreaCode(void) {
 	m_repGranted += gain;
 	m_areaCodes++;
 	HangUp();
+	return true;
+}
+
+void Sim::StartAreaCode(void) {
 	ResetRun();
 	SetDJ("New area code, fresh start!");
-	return true;
 }
 
 int8_t Sim::NextLockedStation(void) const {
@@ -543,7 +546,7 @@ BigNum Sim::Consolation(void) const {
 }
 
 BigNum Sim::PrizeMultiplier(void) const {
-	return BigNum::FromMilli(CHARM_MILLI).Pow(StatLevel(Stat::Charm)) *
+	return BigNum::FromMilli(1000 + CHARM_STEP_MILLI * StatLevel(Stat::Charm)) *
 		   BigNum::FromUint(2).Pow(PerkLevel(Perk::BigName));
 }
 

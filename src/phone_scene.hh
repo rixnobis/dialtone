@@ -40,6 +40,7 @@ class PhoneScene final : public psyqo::Scene, public SimListener {
 	void UpdateMenu(void);
 	void HandleMenuButton(psyqo::AdvancedPad::Button button);
 	void ClearOverlay(void);
+	void StartAreaCode(void);
 	void RemoveDeskUpgrades(void);
 	void TickClock(void);
 	void UpdateLineRow(uint8_t index);
@@ -91,6 +92,7 @@ class PhoneScene final : public psyqo::Scene, public SimListener {
 	bool m_menu = false;
 	uint8_t m_menuSel = 0;
 	bool m_menuArmed = false; // the new area code wants a second X
+	bool m_moving = false;	  // Reputation paid, perks on sale, the new run starts on leaving the menu
 
 	SaveGame m_save;
 	uint32_t m_playSeconds = 0; // from the GPU frame counter, never now(): that wraps after 71 minutes

@@ -87,7 +87,7 @@ its base price times 1.15 to the power of the levels you already have (Haggler, 
 | Autodialer | $120 | 10 | see below |
 | Quick fingers | $20 | 5 | redial dials faster (6 frames a digit down to 1), and every call connects sooner after the last digit (30 frames down to 5) |
 | Luck | $30 | 12 | the station is busy 6 points less often, never below 10% |
-| Charm | $25 | no cap | every prize, and so every consolation, x1.1 (compounding) |
+| Charm | $25 | no cap | every prize, and so every consolation, +25% of the base prize a level (added, not compounded) |
 
 ### The autodialer starts out bad, on purpose
 
@@ -144,9 +144,10 @@ START opens the Reputation screen. Everything you have ever earned, in every are
 towards Reputation: your total is the square root of all-time earnings divided by $20,000, rounded
 down. That is 1 point at $20,000, 4 at $320,000, 10 at $2 million and 100 at $200 million.
 
-**New area code** pays out the points you have earned since the last move and starts you over:
-cash, desk items, upgrades and station go back to the beginning. Reputation, perks and all-time
-earnings stay. It asks twice before it does it. The top row tells you when a move would pay
+**New area code** asks twice, then pays out the points you have earned since the last move. The
+game stays paused on the Reputation screen so you can spend them; **Start in the new area code**
+(or START) then starts you over: cash, desk items, upgrades and station go back to the beginning.
+Reputation, perks and all-time earnings stay. The top row tells you when a move would pay
 (`START: +10 rep`).
 
 Reputation buys perks, and perks are kept forever:
@@ -158,7 +159,8 @@ Reputation buys perks, and perks are kept forever:
 | Speed dial | start an area code with the redial button | one level | 3 |
 | Haggler | shop prices grow x1.14 a level | 0.01 less, down to x1.10 at 5 | 4 x 2^level |
 
-Head start and Speed dial act from the next area code; the others act straight away.
+Head start and Speed dial act from the next area code, so buy them between the move and the start;
+the others act straight away.
 
 ## Saving
 
