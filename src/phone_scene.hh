@@ -34,7 +34,9 @@ class PhoneScene final : public psyqo::Scene, public SimListener {
 	void UpdateDesk(void);
 	void HandleButton(psyqo::AdvancedPad::Button button);
 	void UpdateText(void);
-	void DrawBand(int16_t y, int16_t h);
+	void DrawBand(int16_t y, int16_t h, psyqo::Color colour);
+	void UpdateIntro(void);
+	void UpdateLineRow(uint8_t index);
 	void SetRow(uint8_t row, psyqo::Color colour, const char* fmt, ...);
 	void SetMeshIfChanged(GameObject* object, uint8_t& current, uint8_t wanted, const char* const* meshes);
 
@@ -42,7 +44,7 @@ class PhoneScene final : public psyqo::Scene, public SimListener {
 	Tones m_tones;
 	Camera m_camera;
 	GameplayHUD m_hud = GameplayHUD("Phone HUD", {.pos = {0, 0}, .size = {320, 240}});
-	TextHUDElement* m_rows[16] = {nullptr};
+	TextHUDElement* m_rows[24] = {nullptr};
 
 	GameObject* m_keys[KEY_COUNT] = {nullptr};
 	uint8_t m_keyMesh[KEY_COUNT] = {0};
@@ -60,7 +62,7 @@ class PhoneScene final : public psyqo::Scene, public SimListener {
 	bool m_handsetUp = false;
 	uint8_t m_needleStation = 0xff;
 
-	psyqo::Fragments::SimpleFragment<psyqo::Prim::Rectangle> m_bands[2][2];
+	psyqo::Fragments::SimpleFragment<psyqo::Prim::Rectangle> m_bands[2][3];
 	uint8_t m_bandCount = 0;
 
 	bool BuyShopItem(void);
@@ -72,4 +74,10 @@ class PhoneScene final : public psyqo::Scene, public SimListener {
 	uint16_t m_flashTimer = 0; // blinks whatever wants attention
 	uint16_t m_toastTimer = 0;
 	char m_toast[40] = {0};
+
+	bool m_intro = true;		// the how-to-play card, until X or START
+	uint32_t m_shownCash = 0;	// counts up towards the real cash
+	uint16_t m_bannerTimer = 0; // the middle banner: on air or a win
+	uint8_t m_bannerLine = 0;
+	bool m_wasOnAir[MAX_LINES] = {false};
 };

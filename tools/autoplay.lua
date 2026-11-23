@@ -1,10 +1,12 @@
 -- Plays dialtone with the pad: dials the first station by hand, presses redial and buy, cycles the shop,
 -- tunes up once it can. Screenshots at the vsyncs listed in SHOTS (comma separated) into SHOTDIR,
 -- quits at QUIT_AT.
+-- SHOT_EVERY=N adds a screenshot every N vsyncs.
 -- pcsx-redux -run -lua_stdout -dofile tools/autoplay.lua -loadexe dialtone.ps-exe
-local B = { Select = 0, Up = 4, Right = 5, Down = 6, Left = 7, L1 = 10, R1 = 11, Tri = 12, Circle = 13, Cross = 14, Square = 15 }
+local B = { Select = 0, Start = 3, Up = 4, Right = 5, Down = 6, Left = 7, L1 = 10, R1 = 11, Tri = 12, Circle = 13, Cross = 14, Square = 15 }
 local shotdir = os.getenv('SHOTDIR') or '.'
 local quitAt = tonumber(os.getenv('QUIT_AT') or '18000')
+local shotEvery = tonumber(os.getenv('SHOT_EVERY') or '0')
 local shots = {}
 for s in string.gmatch(os.getenv('SHOTS') or '', '[^,]+') do shots[tonumber(s)] = true end
 
@@ -27,6 +29,8 @@ local n, step, held = 0, 1, nil
 listener = PCSX.Events.createEventListener('GPU::Vsync', function()
   n = n + 1
   local pad = PCSX.SIO0.slots[1].pads[1]
+  -- START dismisses the how-to-play card
+  if n == 100 then pad.setOverride(B.Start) elseif n == 106 then pad.clearOverride(B.Start) end
   if n > 120 and n % 10 == 0 and not (buyOnly and n > 300) then
     if held then pad.clearOverride(B[held]); held = nil
     else
@@ -37,7 +41,7 @@ listener = PCSX.Events.createEventListener('GPU::Vsync', function()
       step = step % #plan + 1
     end
   end
-  if shots[n] then
+  if shots[n] or (shotEvery > 0 and n % shotEvery == 0) then
     local ss = PCSX.GPU.takeScreenShot()
     local fh = Support.File.open(string.format('%s/v%05d.raw', shotdir, n), 'TRUNCATE')
     fh:writeMoveSlice(ss.data); fh:close()

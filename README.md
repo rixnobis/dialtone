@@ -18,7 +18,7 @@ as a submodule and not modified.
 
 ## Controls
 
-D-pad moves over the keypad, X dials the key, O hangs up, triangle redials, L1/R1 change station.
+A how-to-play card comes up at boot; X or START closes it. D-pad moves over the keypad, X dials the key, O hangs up, triangle redials, L1/R1 change station.
 Select steps through the shop (the next desk item, then the three stats) and square buys what it
 shows.
 
@@ -55,5 +55,6 @@ committed, so you only need Blender to change the desk.
 - `src/sim.cpp`: the game. Stations, contest rounds, busy/ringing odds, lines, upgrades. No
   rendering in here, so it is the file to change for balance.
 - `src/phone_scene.cpp`: the desk scene, input and the text overlay.
-- `src/tones.cpp`: DTMF, ringback, busy and the win jingle, generated on the SPU from one
-  looping sine block, no sample files.
+- `src/tones.cpp`: DTMF, ringback, busy and the win jingle, generated on the SPU from a
+  two-block looping sine (loop start on the first block, end + repeat on the second), no sample
+  files.

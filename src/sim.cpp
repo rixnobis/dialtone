@@ -254,6 +254,7 @@ void Sim::ConnectToDJ(uint8_t index) {
 	}
 
 	line.callerNumber = ++m_callersSoFar;
+	line.callerTarget = m_callerTarget;
 	if (m_callersSoFar == m_callerTarget) {
 		line.outcome = Outcome::Won;
 		line.prizeWon = m_prize;

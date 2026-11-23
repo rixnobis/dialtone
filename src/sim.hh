@@ -34,7 +34,8 @@ struct Line {
 	uint8_t digitCount = 0;
 	bool autoDialing = false;  // being dialed by redial or the autodialer, not by hand
 	uint16_t timer = 0;		   // ticks left in the current state, or ticks spent idle
-	uint8_t callerNumber = 0;  // what the DJ said when we got through
+	uint8_t callerNumber = 0;  // which caller we were when we got through
+	uint8_t callerTarget = 0;  // which caller the DJ wanted at that moment
 	Outcome outcome = Outcome::None;
 	uint32_t prizeWon = 0;
 };
