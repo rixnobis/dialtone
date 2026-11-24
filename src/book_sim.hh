@@ -97,6 +97,9 @@ class BookSim final {
 	bool ToggleQueued(uint8_t book, uint8_t entry); // false when the tray is full
 	bool IsQueued(uint8_t book, uint8_t entry) const;
 	void ClearQueue(void) { m_queueLength = m_queueCursor = 0; }
+	// numbers from any book but the open one leave the list: a finished book is off the desk and its
+	// numbers could neither be seen nor taken off (returns how many went)
+	uint8_t PruneQueue(void);
 
 	// the corp phone
 	bool AnswerSupervisor(void);

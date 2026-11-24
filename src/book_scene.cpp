@@ -429,7 +429,7 @@ void BookScene::HandleButton(psyqo::AdvancedPad::Button button) {
 				} else {
 					bool was = m_sim.IsQueued(m_panelBook, m_panelSel);
 					if (!m_sim.ToggleQueued(m_panelBook, m_panelSel)) {
-						Toast(150, "Tray full: %d numbers", m_sim.QueueCapacity());
+						Toast(180, "List full (%d): hold SQUARE to clear", m_sim.QueueCapacity());
 					} else {
 						char number[8], text[10];
 						m_sim.EntryNumber(m_panelBook, m_panelSel, number);
@@ -691,7 +691,12 @@ void BookScene::UpdatePanel(void) {
 	if (m_panelSel >= book.entries) {
 		SetRow(ROW_PANEL + PANEL_ROWS - 1, c_yellow, "\"I want out too.\"");
 	} else if (m_sim.HasAutodialer()) {
-		SetRow(ROW_PANEL + PANEL_ROWS - 1, c_grey, "L1/R1 %d/%d  SQ list", first / PANEL_ENTRIES + 1, pages);
+		// the key reminder takes turns with the clear-list one, the panel is 19 columns wide
+		if ((m_flashTimer / 120) % 2) {
+			SetRow(ROW_PANEL + PANEL_ROWS - 1, c_grey, "hold SQ: clear list");
+		} else {
+			SetRow(ROW_PANEL + PANEL_ROWS - 1, c_grey, "L1/R1 %d/%d  SQ list", first / PANEL_ENTRIES + 1, pages);
+		}
 	} else {
 		SetRow(ROW_PANEL + PANEL_ROWS - 1, c_grey, "L1/R1 move  pg %d/%d", first / PANEL_ENTRIES + 1, pages);
 	}
@@ -909,6 +914,19 @@ void BookScene::frame() {
 			}
 		}
 		m_toastTimer = m_toastTimer > deltaTime ? m_toastTimer - deltaTime : 0;
+		// holding Square with the book open empties the autodialer's list
+		if (m_panel && !m_shop &&
+			g_madnightEngine.m_input.isButtonPressed(psyqo::AdvancedPad::Pad::Pad1a, psyqo::AdvancedPad::Button::Square)) {
+			if (m_squareHold < CLEAR_HOLD_TICKS && m_squareHold + deltaTime >= CLEAR_HOLD_TICKS &&
+				m_sim.QueueLength()) {
+				m_sim.ClearQueue();
+				Toast(150, "Autodialer list cleared (0/%d)", m_sim.QueueCapacity());
+				printf("DIALTONE: list cleared\n");
+			}
+			m_squareHold = m_squareHold + deltaTime < CLEAR_HOLD_TICKS ? m_squareHold + deltaTime : CLEAR_HOLD_TICKS;
+		} else {
+			m_squareHold = 0;
+		}
 		m_bannerTimer = m_bannerTimer > deltaTime ? m_bannerTimer - deltaTime : 0;
 		if (m_noteScene && m_noteStep < 6) {
 			if (m_noteTimer > deltaTime) {

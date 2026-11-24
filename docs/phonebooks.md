@@ -23,6 +23,7 @@ shows them locked.
 | Triangle | open and close the phone book |
 | L1 / R1 | move up / down the book (book open) |
 | Square | put the number under the cursor on the autodialer's list, or take it off |
+| Square, held 1 s | empty the autodialer's list (book open) |
 | Select | supplies (the shop) |
 | START | the office: your stats, the books, the categories; X there shows the how-to-play card |
 
@@ -88,6 +89,13 @@ sold to.
 | --- | --- | --- | --- |
 | time per digit | 40 frames | 22 | 10 |
 | rest between calls | 3 s | 1.7 s | 0.8 s |
+
+The list only ever holds numbers from the open book. You cannot pick a book yourself: the open
+book is the first one not finished, so the book changes only when you finish it, and at that moment
+its numbers drop off the list and the autodialer waits for numbers from the new one. The last book
+stays open once it is finished, so its list stays. A save made before this rule that still has an
+old book's numbers listed is cleaned up when it loads. Holding Square for a second with the book open
+empties the whole list; the book's bottom line takes turns between the keys and that reminder.
 
 The list holds 4 numbers, 8 with the first bigger tray ($80), 12 with the second ($200). It pays
 the same fee and bonus as a call you make yourself.

@@ -318,6 +318,7 @@ void BookSim::EndCall(uint8_t index, CallOutcome outcome) {
 		if (!wasDone && BookDone(line.book)) {
 			printf("DIALTONE: book %d done calls=%d connects=%d earned=%d\n", line.book + 1, m_calls, m_connects,
 				   m_earned);
+			PruneQueue();
 			m_listener->OnBookDone(line.book);
 		}
 	}
@@ -451,6 +452,25 @@ void BookSim::TickAutodialer(void) {
 	line.paid = 0;
 	EntryNumber(item.book, item.entry, line.digits);
 	printf("DIALTONE: autodial line=%d 555-%04d\n", free, m_numbers[item.book][item.entry]);
+}
+
+uint8_t BookSim::PruneQueue(void) {
+	uint8_t open = OpenBook(), kept = 0, cursor = 0;
+	for (uint8_t i = 0; i < m_queueLength; i++) {
+		if (m_queue[i].book == open) {
+			if (i < m_queueCursor) {
+				cursor++;
+			}
+			m_queue[kept++] = m_queue[i];
+		}
+	}
+	uint8_t dropped = m_queueLength - kept;
+	m_queueLength = kept;
+	m_queueCursor = cursor;
+	if (dropped) {
+		printf("DIALTONE: list dropped %d numbers not in book %d, %d left\n", dropped, open + 1, kept);
+	}
+	return dropped;
 }
 
 bool BookSim::IsQueued(uint8_t book, uint8_t entry) const {
@@ -661,6 +681,7 @@ void BookSim::Load(const BookSave& in) {
 		}
 	}
 	m_queueCursor = m_queueLength ? in.queueCursor % m_queueLength : 0;
+	PruneQueue(); // a save made before this rule can hold a finished book's numbers
 	m_noteState = eastl::min<uint8_t>(in.noteState, 3);
 	m_supervisorCalls = in.supervisorCalls;
 	m_quota = in.quota;

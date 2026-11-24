@@ -87,10 +87,12 @@ class BookScene final : public psyqo::Scene, public BookListener {
 	uint8_t m_keyFlash = 0;
 	uint16_t m_toneStop[2] = {0, 0}; // a dud's fast busy stops when this runs out
 	static constexpr uint16_t DUD_TONE_TICKS = 90;
+	static constexpr uint16_t CLEAR_HOLD_TICKS = 60;
 	uint16_t m_flashTimer = 0;
 
 	bool m_intro = true;
 	bool m_panel = false;
+	uint16_t m_squareHold = 0; // ticks Square has been held with the book open; a second clears the list
 	uint8_t m_panelSel = 0;
 	uint8_t m_panelBook = 0;
 	bool m_shop = false;
