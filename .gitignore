@@ -7,3 +7,6 @@
 /build/
 /dialtone.bin
 *.blend1
+/assets/VOICE/
+tools/__pycache__/
+/toc-full.json

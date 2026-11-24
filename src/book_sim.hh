@@ -141,6 +141,8 @@ class BookSim final {
 
 	// the corp phone
 	bool AnswerSupervisor(void);
+	// what the last answered corp call was: 0 the first one, 1 quota met, 2 quota missed
+	uint8_t SupervisorResult(void) const { return m_supResult; }
 	bool SupervisorRinging(void) const { return m_supRinging; }
 	const char* CorpLine(void) const { return m_corpLine; }
 
@@ -265,6 +267,7 @@ class BookSim final {
 	int8_t m_autoShown = -1;
 
 	bool m_supRinging = false;
+	uint8_t m_supResult = 0;
 	uint16_t m_supTimer = 0;
 	uint16_t m_supervisorCalls = 0;
 	uint32_t m_simTick = 0; // ticks since the scene started, for the log

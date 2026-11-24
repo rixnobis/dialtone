@@ -160,6 +160,9 @@ void BookScene::start(StartReason reason) {
 #endif
 	g_madnightEngine.m_rand.seed(seed);
 	m_tones.Init();
+	m_musak.Init();
+	m_musak.Start();
+	g_voiceLines.Seed(seed ^ 0x2433);
 	m_sim.Init(&g_madnightEngine.m_rand, this, seed);
 
 	auto status = m_save.Load(m_sim, m_playSeconds);
@@ -208,7 +211,11 @@ void BookScene::start(StartReason reason) {
 	printf("DIALTONE: books ready\n");
 }
 
-void BookScene::teardown(TearDownReason reason) { g_madnightEngine.m_input.setOnEvent(nullptr); }
+void BookScene::teardown(TearDownReason reason) {
+	g_madnightEngine.m_input.setOnEvent(nullptr);
+	m_musak.Stop();
+	g_voiceLines.Stop();
+}
 
 void BookScene::CreateDesk(void) {
 	Place("desk", "MODELS/DESK.MB", {0, 0, 0});
@@ -455,6 +462,9 @@ void BookScene::HandleMenuButton(psyqo::AdvancedPad::Button button) {
 	if (button == Button::Start || button == Button::Circle) {
 		m_menu = false;
 		ClearOverlay();
+	} else if (button == Button::Triangle) {
+		m_musak.SetEnabled(!m_musak.Enabled());
+		printf("DIALTONE: musak %s\n", m_musak.Enabled() ? "on" : "off");
 	} else if (button == Button::Cross && m_sim.PromotionReady()) {
 		m_menu = false;
 		m_promo = 1;
@@ -580,6 +590,7 @@ void BookScene::HandleButton(psyqo::AdvancedPad::Button button) {
 		if (m_noteStep >= 6 && (button == Button::Cross || button == Button::Start)) {
 			m_noteScene = false;
 			StopTones();
+			m_musak.Start();
 			m_sim.NoteSceneOver();
 			ClearOverlay();
 			RequestSave();
@@ -626,6 +637,7 @@ void BookScene::HandleButton(psyqo::AdvancedPad::Button button) {
 			// the corp first; otherwise the book opens at the next number nobody has called
 			if (m_sim.AnswerSupervisor()) {
 				m_tones.Line(1, Tones::Cue::None);
+				g_voiceLines.Supervisor(VoiceLines::Kind(VoiceLines::SUP_WELCOME + m_sim.SupervisorResult()));
 				RequestSave();
 			} else {
 				JumpToUncalled();
@@ -734,6 +746,14 @@ void BookScene::OnHangUp(uint8_t line) {
 	if (!Audible(line)) {
 		return;
 	}
+	const auto& call = m_sim.GetLine(line);
+	if (call.state == BookLineState::Talking) {
+		g_voiceLines.PickUp(line, call.pending == CallOutcome::Sold     ? VoiceLines::SALE
+								   : call.pending == CallOutcome::NoSale ? VoiceLines::NOSALE
+																   : VoiceLines::HANGUP);
+	} else if (call.outcome == CallOutcome::NoSale) {
+		g_voiceLines.CallEnded(line, false);
+	}
 	uint8_t slot = m_sim.GetLine(line).byMachine ? 1 : 0;
 	if (slot == 1 && m_sim.SupervisorRinging()) {
 		return;
@@ -749,6 +769,9 @@ void BookScene::OnHangUp(uint8_t line) {
 
 void BookScene::OnSold(uint8_t line) {
 	OnHangUp(line);
+	if (Audible(line)) {
+		g_voiceLines.CallEnded(line, true);
+	}
 	const auto& l = m_sim.GetLine(line);
 	char top[40], bottom[40];
 	snprintf(bottom, sizeof(bottom), "        they bought it: +$%d", l.paid);
@@ -831,6 +854,9 @@ void BookScene::StopTones(void) {
 
 void BookScene::OnNoteAnswered(void) {
 	StopTones();
+	// the note's call has the room to itself: no musak, no callers
+	m_musak.Stop();
+	g_voiceLines.Stop();
 	m_noteScene = true;
 	m_noteStep = 1;
 	m_noteTimer = NOTE_LINE_TICKS;
@@ -1142,9 +1168,9 @@ void BookScene::UpdateMenu(void) {
 	if (m_save.WritingFile()) {
 		SetRow(r++, c_amber, "SAVING to card 1 - hands off");
 	} else if (m_save.CardOk()) {
-		SetRow(r++, c_grey, "Card 1: saves at pauses");
+		SetRow(r++, c_grey, "Card 1: saves at pauses  TRI musak %s", m_musak.Enabled() ? "on" : "off");
 	} else {
-		SetRow(r++, c_grey, "No memory card in slot 1: not saving");
+		SetRow(r++, c_grey, "No card: not saving  TRI musak %s", m_musak.Enabled() ? "on" : "off");
 	}
 	if (m_sim.PromotionReady()) {
 		SetRow(r++, (m_flashTimer & 32) ? c_amber : c_yellow, "X PROMOTION   SQ how to play");
@@ -1376,6 +1402,9 @@ void BookScene::frame() {
 
 	m_flashTimer += deltaTime;
 	TickClock();
+	g_voiceLines.Tick(deltaTime);
+	m_musak.Duck(g_voiceLines.Live());
+	m_musak.Tick(deltaTime);
 	bool paused = m_intro || m_menu || m_promo;
 	if (!paused) {
 		if (!m_noteScene) {

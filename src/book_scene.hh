@@ -3,7 +3,9 @@
 #include "book_sim.hh"
 #include "key_glyphs.hh"
 #include "save.hh"
+#include "musak.hh"
 #include "tones.hh"
+#include "voice_lines.hh"
 
 #include "render/camera.hh"
 #include "ui/hud/gameplay_hud.hh"
@@ -75,6 +77,7 @@ class BookScene final : public psyqo::Scene, public BookListener {
 
 	BookSim m_sim;
 	Tones m_tones;
+	Musak m_musak;
 	Camera m_camera;
 	GameplayHUD m_hud = GameplayHUD("Books HUD", {.pos = {0, 0}, .size = {320, 240}});
 	TextHUDElement* m_rows[32] = {nullptr};

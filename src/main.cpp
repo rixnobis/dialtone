@@ -3,6 +3,7 @@
 #include "book_scene.hh"
 #include "mode_scene.hh"
 #include "phone_scene.hh"
+#include "voice_lines.hh"
 
 #include <EASTL/vector.h>
 #include <psyqo/coroutine.hh>
@@ -16,6 +17,7 @@ class DialtoneGame final : public MadnightEngineGame {
 };
 
 static DialtoneGame s_game;
+VoiceLines g_voiceLines;
 MadnightEngineGame& g_madnightEngineGame = s_game;
 
 psyqo::Coroutine<> DialtoneGame::InitialLoad(void) {
@@ -35,6 +37,8 @@ psyqo::Coroutine<> DialtoneGame::InitialLoad(void) {
 		files.push_back(entry);
 	}
 	co_await g_madnightEngine.HardLoadingScreen(eastl::move(files), &modeScene);
+	// the optional voice pack loads behind the mode screen, after the loader has had sound RAM to itself
+	co_await g_voiceLines.Load();
 }
 
 int main() { return g_madnightEngine.run(); }

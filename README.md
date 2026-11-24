@@ -47,6 +47,21 @@ pcsx-redux -run -pcdrv -pcdrvbase build -loadexe build/dialtone.ps-exe
 default) or `MODE=books`. For a disc image instead, build without `DEFINES=PCDRV` (run `make clean` first, the engine is
 built with the same defines) and run pcsx-redux's `authoring` tool on `toc.json`.
 
+Phone books can also have callers who talk. The recorded lines live in a separate repository,
+[dialtone-assets](https://github.com/rixnobis/dialtone-assets); the build takes them only when you
+pack them in:
+
+```
+git clone https://github.com/rixnobis/dialtone-assets ../dialtone-assets
+python3 -I tools/pack_voices.py ../dialtone-assets     # writes assets/VOICE/
+./tools/make_assets.sh                                 # or just the make_image.py line in it
+```
+
+For a disc, `python3 -I tools/make_toc.py > toc-full.json` and give `authoring` that file instead
+of `toc.json`. Without `assets/VOICE` everything builds and plays as before, callers silent. All
+the lines sit in sound RAM from boot (about 0x7c000 bytes are set aside for them, at 8000 Hz).
+The office musak needs nothing extra: `tools/make_musak.py` writes `src/musak_data.inc`.
+
 `make_assets.sh` needs Blender (headless is fine) and Python with numpy. The desk lives in
 `tools/build_desk.py`, which also saves `blender/desk.blend` to look at and writes
 `src/desk_layout.hh` with where the keys, handset and lamps go. The meshbins it produces are
@@ -73,6 +88,11 @@ type on the host.
   written in the background.
 - `src/phone_scene.cpp`: the radio desk scene, input, the text overlay and the Reputation screen.
 - `src/book_scene.cpp`: the phone books desk, the book panel, supplies, the office and the note.
+- `src/musak.cpp`: the office musak in phone books, a 16-bar bossa loop on SPU voices 8-15 from
+  five tiny synthesised instruments (`tools/make_musak.py`), ducked under voices, Triangle in the
+  office turns it off.
+- `src/voice_lines.cpp`: the optional caller and supervisor lines: one in two pick-ups speaks,
+  never two at once, never the same line twice running.
 - `src/tones.cpp`: DTMF, ringback, busy and the win jingle, generated on the SPU from a
   two-block looping sine (loop start on the first block, end + repeat on the second), no sample
   files.

@@ -736,6 +736,7 @@ bool BookSim::AnswerSupervisor(void) {
 	// the quota is per line you own, so it stays reachable by hand on one line; m_supervisorCalls is
 	// your standing with the corp: up one per quota met, down one per quota missed
 	bool met = m_quota != 0 && QuotaDone() >= m_quota;
+	m_supResult = m_quota == 0 ? 0 : met ? 1 : 2;
 	if (m_quota != 0) {
 		if (met) {
 			m_supervisorCalls++;
