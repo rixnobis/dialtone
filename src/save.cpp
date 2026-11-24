@@ -5,9 +5,6 @@
 #include <psyqo/xprintf.h>
 #include <stddef.h>
 
-static constexpr uint32_t SAVE_MAGIC = 0x4e544c44; // "DLTN"
-static constexpr uint16_t SAVE_VERSION = 1;
-static constexpr const char* SAVE_NAME = "BASCUS-00000DIALTONE";
 static constexpr const char* SAVE_TITLE = "DIALTONE";
 static constexpr MC::Port SAVE_PORT = MC::Port::Port0;
 
@@ -37,16 +34,15 @@ static const MCFS::Icon& Icon(void) {
 	return icon;
 }
 
-uint32_t SaveGame::Checksum(const File& file) {
-	auto bytes = reinterpret_cast<const uint8_t*>(&file);
+uint32_t SaveSlot::Checksum(const uint8_t* file, uint16_t length) {
 	uint32_t hash = 2166136261u;
-	for (uint32_t i = 0; i < offsetof(File, checksum); i++) {
-		hash = (hash ^ bytes[i]) * 16777619u;
+	for (uint16_t i = 0; i < length; i++) {
+		hash = (hash ^ file[i]) * 16777619u;
 	}
 	return hash;
 }
 
-SaveGame::Status SaveGame::Load(Sim& sim, uint32_t& playSeconds) {
+SaveSlot::Status SaveSlot::Load(void* payload, uint16_t size, uint32_t& playSeconds) {
 	auto& card = g_madnightEngine.m_memoryCardHelper;
 	MC::Error state = card.GetCardState(SAVE_PORT);
 	if (state != MC::Error::OK) {
@@ -57,37 +53,41 @@ SaveGame::Status SaveGame::Load(Sim& sim, uint32_t& playSeconds) {
 	m_cardOk = true;
 
 	bool exists = false;
-	MC::Error err = card.DoesSaveFileExist(SAVE_PORT, SAVE_NAME, &exists);
+	MC::Error err = card.DoesSaveFileExist(SAVE_PORT, m_name, &exists);
 	if (err != MC::Error::OK || !exists) {
 		m_bootStatus = err == MC::Error::OK ? Status::Fresh : Status::Error;
 		printf("DIALTONE: save none on card (%s)\n", MC::errorMessage(err));
 		return m_bootStatus;
 	}
 
+	uint16_t fileSize = FileSize(size);
 	uint32_t length = 0;
-	err = card.ReadFile(SAVE_PORT, SAVE_NAME, &m_file, sizeof(m_file), &length);
+	err = card.ReadFile(SAVE_PORT, m_name, m_file, fileSize, &length);
 	if (err != MC::Error::OK) {
 		m_bootStatus = Status::Error;
 		printf("DIALTONE: save read failed %s\n", MC::errorMessage(err));
 		return m_bootStatus;
 	}
-	if (length < sizeof(m_file) || m_file.magic != SAVE_MAGIC || m_file.version != SAVE_VERSION ||
-		m_file.size != sizeof(m_file) || m_file.checksum != Checksum(m_file)) {
+	uint32_t magic, sum;
+	uint16_t version, stored;
+	__builtin_memcpy(&magic, m_file, 4);
+	__builtin_memcpy(&version, m_file + 4, 2);
+	__builtin_memcpy(&stored, m_file + 6, 2);
+	__builtin_memcpy(&sum, m_file + fileSize - 4, 4);
+	if (length < fileSize || magic != m_magic || version != m_version || stored != fileSize ||
+		sum != Checksum(m_file, fileSize - 4)) {
 		m_bootStatus = Status::Corrupt;
-		printf("DIALTONE: save ignored, bad header or checksum (len=%d magic=%08x)\n", length, m_file.magic);
+		printf("DIALTONE: save ignored, bad header or checksum (len=%d magic=%08x)\n", length, magic);
 		return m_bootStatus;
 	}
 
-	sim.Load(m_file.sim);
-	playSeconds = m_file.playSeconds;
+	__builtin_memcpy(payload, m_file + HEADER, size);
+	__builtin_memcpy(&playSeconds, m_file + fileSize - 8, 4);
 	m_bootStatus = Status::Loaded;
-	char cash[12];
-	sim.Cash().Format(cash);
-	printf("DIALTONE: save loaded cash=%s areacodes=%d played=%ds\n", cash, sim.AreaCodes(), playSeconds);
 	return m_bootStatus;
 }
 
-void SaveGame::Save(const Sim& sim, uint32_t playSeconds) {
+void SaveSlot::Save(const void* payload, uint16_t size, uint32_t playSeconds) {
 	if (m_inFlight) {
 		return;
 	}
@@ -102,14 +102,18 @@ void SaveGame::Save(const Sim& sim, uint32_t playSeconds) {
 		return;
 	}
 
-	m_file.magic = SAVE_MAGIC;
-	m_file.version = SAVE_VERSION;
-	m_file.size = sizeof(m_file);
-	sim.Save(m_file.sim);
-	m_file.playSeconds = playSeconds;
-	m_file.checksum = Checksum(m_file);
+	uint16_t fileSize = FileSize(size);
+	__builtin_memset(m_file, 0, fileSize);
+	__builtin_memcpy(m_file, &m_magic, 4);
+	__builtin_memcpy(m_file + 4, &m_version, 2);
+	__builtin_memcpy(m_file + 6, &fileSize, 2);
+	__builtin_memcpy(m_file + HEADER, payload, size);
+	__builtin_memcpy(m_file + fileSize - 8, &playSeconds, 4);
+	uint32_t sum = Checksum(m_file, fileSize - 4);
+	__builtin_memcpy(m_file + fileSize - 4, &sum, 4);
+	m_writingAt = playSeconds;
 	m_startFrame = g_madnightEngine.gpu().getFrameCount();
-	card.WriteFile(SAVE_PORT, SAVE_NAME, SAVE_TITLE, Icon(), &m_file, sizeof(m_file), [this](MC::Error err) {
+	card.WriteFile(SAVE_PORT, m_name, SAVE_TITLE, Icon(), m_file, fileSize, [this](MC::Error err) {
 		m_inFlight = false;
 		m_lastFailed = err != MC::Error::OK;
 		if (m_lastFailed) {
@@ -118,9 +122,53 @@ void SaveGame::Save(const Sim& sim, uint32_t playSeconds) {
 			printf("DIALTONE: save failed %s\n", MC::errorMessage(err));
 		} else {
 			m_saves++;
-			m_lastSavedAt = m_file.playSeconds;
-			printf("DIALTONE: saved #%d played=%ds took=%d frames\n", m_saves, m_file.playSeconds,
+			m_lastSavedAt = m_writingAt;
+			printf("DIALTONE: saved #%d played=%ds took=%d frames\n", m_saves, m_writingAt,
 				   g_madnightEngine.gpu().getFrameCount() - m_startFrame);
 		}
 	});
+}
+
+SaveGame::SaveGame() : SaveSlot("BASCUS-00000DIALTONE", 0x4e544c44 /* "DLTN" */, 1) {}
+
+SaveSlot::Status SaveGame::Load(Sim& sim, uint32_t& playSeconds) {
+	SimSave data;
+	Status status = SaveSlot::Load(&data, sizeof(data), playSeconds);
+	if (status != Status::Loaded) {
+		return status;
+	}
+	sim.Load(data);
+	char cash[12];
+	sim.Cash().Format(cash);
+	printf("DIALTONE: save loaded cash=%s areacodes=%d played=%ds\n", cash, sim.AreaCodes(), playSeconds);
+	return status;
+}
+
+void SaveGame::Save(const Sim& sim, uint32_t playSeconds) {
+	if (Writing()) {
+		return;
+	}
+	SimSave data;
+	sim.Save(data);
+	SaveSlot::Save(&data, sizeof(data), playSeconds);
+}
+
+BookSaveGame::BookSaveGame() : SaveSlot("BASCUS-00000DIALBOOK", 0x4b424c44 /* "DLBK" */, 1) {}
+
+SaveSlot::Status BookSaveGame::Load(BookSim& sim, uint32_t& playSeconds) {
+	BookSave data;
+	Status status = SaveSlot::Load(&data, sizeof(data), playSeconds);
+	if (status == Status::Loaded) {
+		sim.Load(data);
+	}
+	return status;
+}
+
+void BookSaveGame::Save(const BookSim& sim, uint32_t playSeconds) {
+	if (Writing()) {
+		return;
+	}
+	BookSave data;
+	sim.Save(data);
+	SaveSlot::Save(&data, sizeof(data), playSeconds);
 }

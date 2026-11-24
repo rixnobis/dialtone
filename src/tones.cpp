@@ -89,6 +89,20 @@ void Tones::TickLine(uint8_t line) {
 		case Cue::Busy:
 			lo = 480, hi = 620, on = 25, period = 50;
 			break;
+		case Cue::Ring: {
+			// a bell: a burst of short pulses, then quiet, louder than a ringback
+			uint16_t phase = v.t % 300;
+			bool pulse = phase < 120 && (phase / 8) % 2 == 0;
+			bool was = v.t > 0 && (v.t - 1) % 300 < 120 && ((v.t - 1) % 300 / 8) % 2 == 0;
+			if (pulse && !was) {
+				Play(a, 680, VOLUME_KEYPAD);
+				Play(a + 1, 900, VOLUME_KEYPAD);
+			} else if (!pulse && was) {
+				Stop(0b11 << a);
+			}
+			v.t++;
+			return;
+		}
 		default:
 			return;
 	}

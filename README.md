@@ -2,14 +2,25 @@
 
 ![dialtone on a satellite station](docs/img/hero.png)
 
-An incremental PS1 game about phoning in to radio contests. The DJ says "caller 5 wins $20", you
+Two incremental PS1 games on one disc, picked on the boot screen, sharing the desk, the phone and
+its keypad, each with its own save file.
+
+**Radio contests**, the first game, is about phoning in to radio contests. The DJ says "caller 5 wins $20", you
 dial the station, and if you get through as the fifth caller the money is yours. Buy a redial
 button, a second line and an autodialer that starts out dumb and learns to time its calls, climb
 from a local station to a satellite one where prizes run to the millions, then move to a new area
 code for Reputation and perks that make the next run faster. Numbers go past a billion and keep
 going; progress saves to the memory card.
 
-How to play, every upgrade and every number: [the manual](docs/manual.md).
+**Phone books** is the second: you are stuck making cold calls for a corporation that never says
+what it sells. It pays a little per call and more when somebody listens. Work through the
+residential phone books number by number, buy more lines, hand a bad autodialer a list, answer
+the corp when it rings about your quota, and when the last book is done a note turns up from
+somebody higher up who wants out too. This is phase 1 of that idea: the residential books and the
+first note.
+
+How to play, every upgrade and every number: [radio contests](docs/manual.md),
+[phone books](docs/phonebooks.md).
 
 Built on [psyqo-madnight-engine](https://github.com/Forceh91/psyqo-madnight-engine), pulled in
 as a submodule and not modified.
@@ -31,7 +42,8 @@ cp dialtone.ps-exe build/
 pcsx-redux -run -pcdrv -pcdrvbase build -loadexe build/dialtone.ps-exe
 ```
 
-For a disc image instead, build without `DEFINES=PCDRV` (run `make clean` first, the engine is
+`tools/autoplay.lua` and `tools/run.sh` pick the game on the boot screen with `MODE=radio` (the
+default) or `MODE=books`. For a disc image instead, build without `DEFINES=PCDRV` (run `make clean` first, the engine is
 built with the same defines) and run pcsx-redux's `authoring` tool on `toc.json`.
 
 `make_assets.sh` needs Blender (headless is fine) and Python with numpy. The desk lives in
@@ -40,18 +52,26 @@ built with the same defines) and run pcsx-redux's `authoring` tool on `toc.json`
 committed, so you only need Blender to change the desk.
 
 `make DEFINES="PCDRV DIALTONE_START_CASH=300"` starts you with money, for trying the upgrades; it
-counts as earned, so 2000000 opens every station and the first new area code. `tools/run.sh`
+counts as earned, so 2000000 opens every station and the first new area code. In phone books it
+is plain cash; `DIALTONE_SEED=N` fixes the books (and prints every number, for scripted runs, which
+dial with `DIAL="vsync:digits,..."`), and `DIALTONE_PREDIAL=N` starts with every number called but
+the last N of the last book, to reach the note quickly. `tools/run.sh`
 runs a headless session with `tools/autoplay.lua` driving the pad (`CARD=` keeps the memory card
 between runs, `SEQ=` presses buttons at given frames). `tools/test_bignum.sh` checks the number
 type on the host.
 
 ## Where things are
 
-- `src/sim.cpp`: the game. Stations, contest rounds, busy/ringing odds, lines, upgrades, price
+- `src/mode_scene.cpp`: the boot screen that picks the game.
+- `src/sim.cpp`: the radio game. Stations, contest rounds, busy/ringing odds, lines, upgrades, price
   curves, Reputation and perks. No rendering in here, so it is the file to change for balance.
 - `src/bignum.cpp`: the number type, a 9-digit mantissa and a power of ten, integer only.
-- `src/save.cpp`: the memory card save, loaded at boot and written in the background.
-- `src/phone_scene.cpp`: the desk scene, input, the text overlay and the Reputation screen.
+- `src/book_sim.cpp`: the phone books game: the books, call outcomes, lines, the autodialer, the
+  corp, the note. No rendering either.
+- `src/save.cpp`: the memory card saves, one file per game, loaded when the game is picked and
+  written in the background.
+- `src/phone_scene.cpp`: the radio desk scene, input, the text overlay and the Reputation screen.
+- `src/book_scene.cpp`: the phone books desk, the book panel, supplies, the office and the note.
 - `src/tones.cpp`: DTMF, ringback, busy and the win jingle, generated on the SPU from a
   two-block looping sine (loop start on the first block, end + repeat on the second), no sample
   files.

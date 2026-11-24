@@ -1,5 +1,13 @@
 # How to play dialtone
 
+The disc holds two games. The boot screen asks which: **Radio contests** (this page) or
+**Phone books** ([its own page](phonebooks.md)). Up/down picks, X starts. Each has its own save
+file, so playing one never touches the other.
+
+![The boot screen](img/mode.png)
+
+## Radio contests
+
 You sit at a desk with a phone and a radio. The DJ keeps running the same contest: "caller N wins".
 Dial the station and get through as exactly the Nth caller to win the prize. Win, buy things
 that make you better at winning, move up to bigger stations, and when the numbers stop being fun,

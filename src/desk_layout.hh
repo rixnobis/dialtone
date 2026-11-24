@@ -29,5 +29,20 @@ constexpr psyqo::Vec3 KEYS[12] = {
 	{-0.8500_ws, -0.3000_ws, 0.1400_ws},
 };
 constexpr psyqo::Vec3 NEEDLE[2] = {{1.8000_ws, -0.5600_ws, 0.4650_ws}, {2.2000_ws, -0.5600_ws, 0.4650_ws}};
+constexpr psyqo::Vec3 LINE_LAMPS[10] = {
+	{0.8000_ws, -0.3000_ws, 0.7500_ws},
+	{0.9900_ws, -0.3000_ws, 0.7500_ws},
+	{1.1800_ws, -0.3000_ws, 0.7500_ws},
+	{1.3700_ws, -0.3000_ws, 0.7500_ws},
+	{1.5600_ws, -0.3000_ws, 0.7500_ws},
+	{0.8000_ws, -0.3000_ws, 1.0500_ws},
+	{0.9900_ws, -0.3000_ws, 1.0500_ws},
+	{1.1800_ws, -0.3000_ws, 1.0500_ws},
+	{1.3700_ws, -0.3000_ws, 1.0500_ws},
+	{1.5600_ws, -0.3000_ws, 1.0500_ws},
+};
+constexpr psyqo::Vec3 BOOK_STACK = {2.1500_ws, -0.0000_ws, 0.8500_ws};
+constexpr psyqo::Vec3 BOOK_DONE = {2.1500_ws, -0.0000_ws, 1.7500_ws};
+constexpr psyqo::FixedPoint<> BOOK_HEIGHT = 0.1300_ws;
 
 } // namespace desk

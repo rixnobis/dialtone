@@ -31,6 +31,30 @@ if buyOnly then plan = { 'Select', 'Square', 'Square', 'Down', 'Square', 'Square
 local seq = {}
 for v, b in string.gmatch(os.getenv('SEQ') or '', '(%d+):(%a+%d?)') do seq[tonumber(v)] = b end
 local noPlan = os.getenv('NOPLAN') == '1'
+
+-- the boot screen picks the game: MODE=radio (default) or MODE=books, chosen at MODE_AT
+local mode = os.getenv('MODE') or 'radio'
+local modeAt = tonumber(os.getenv('MODE_AT') or '70')
+if mode == 'books' then seq[modeAt - 14] = 'Down' end
+seq[modeAt] = 'Cross'
+
+-- DIAL="900:5550142,1500:5551234": dial these numbers by hand from these vsyncs, one press every
+-- 10 frames, walking the keypad cursor from where the last DIAL left it (it starts on '1')
+local keyAt = { ['1'] = { 0, 0 }, ['2'] = { 0, 1 }, ['3'] = { 0, 2 }, ['4'] = { 1, 0 }, ['5'] = { 1, 1 },
+  ['6'] = { 1, 2 }, ['7'] = { 2, 0 }, ['8'] = { 2, 1 }, ['9'] = { 2, 2 }, ['*'] = { 3, 0 }, ['0'] = { 3, 1 },
+  ['#'] = { 3, 2 } }
+local cy, cx = 0, 0
+for v, digits in string.gmatch(os.getenv('DIAL') or '', '(%d+):([%d%*#]+)') do
+  local t = tonumber(v)
+  for d in string.gmatch(digits, '.') do
+    local ty, tx = keyAt[d][1], keyAt[d][2]
+    while cy < ty do seq[t] = 'Down'; cy = cy + 1; t = t + 10 end
+    while cy > ty do seq[t] = 'Up'; cy = cy - 1; t = t + 10 end
+    while cx < tx do seq[t] = 'Right'; cx = cx + 1; t = t + 10 end
+    while cx > tx do seq[t] = 'Left'; cx = cx - 1; t = t + 10 end
+    seq[t] = 'Cross'; t = t + 10
+  end
+end
 local seqHeld = {}
 
 local introAt = tonumber(os.getenv('INTRO_AT') or '100')

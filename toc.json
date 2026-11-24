@@ -10,6 +10,18 @@
     },
     "files": [
         {
+            "path": "assets/MODELS/BOOK.MB",
+            "name": "MODELS/BOOK.MB"
+        },
+        {
+            "path": "assets/MODELS/BOOKDONE.MB",
+            "name": "MODELS/BOOKDONE.MB"
+        },
+        {
+            "path": "assets/MODELS/LINEBOARD.MB",
+            "name": "MODELS/LINEBOARD.MB"
+        },
+        {
             "path": "assets/MODELS/AUTODIAL.MB",
             "name": "MODELS/AUTODIAL.MB"
         },

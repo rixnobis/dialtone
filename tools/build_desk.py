@@ -278,6 +278,26 @@ def build():
         add_box(bm, col, (-0.08, -0.08, 0.0), (0.08, 0.08, 0.1), colour, tuple(c * 0.8 for c in colour))
         new_object(name, bm)
 
+    # phone books mode: a line board with a lamp per line where the radio stood, and the books
+    bm, col = start("LINEBOARD")
+    add_box(bm, col, (0.7, 0.55, 0.0), (1.65, 1.35, 0.3), (0.16, 0.16, 0.18), (0.2, 0.2, 0.23), skip=("top", "bottom", "front"))
+    add_front(bm, col, 0.7, 1.65, 0.55, 0.0, 0.3, 0.2, (0.2, 0.2, 0.23))
+    add_grid(bm, col, (0.7, 0.55), (1.65, 1.35), 0.3, 0.19, (0.16, 0.16, 0.18))
+    new_object("LINEBOARD", bm)
+    layout["LINE_LAMPS"] = [(0.8 + (i % 5) * 0.19, 0.75 + (i // 5) * 0.3, 0.3) for i in range(10)]
+
+    # one phone book, yellow pages; the game stacks as many as are left to dial, and a grey one per
+    # finished book on the done pile behind
+    for name, cover in (("BOOK", (0.95, 0.78, 0.12)), ("BOOKDONE", (0.5, 0.48, 0.4))):
+        bm, col = start(name)
+        # pages on the sides, the cover on top in tiles small enough to need no subdivision
+        add_box(bm, col, (-0.4, -0.3, 0.0), (0.4, 0.3, 0.12), cover, (0.95, 0.93, 0.85), skip=("bottom", "top"))
+        add_grid(bm, col, (-0.4, -0.3), (0.4, 0.3), 0.12, 0.2, cover)
+        new_object(name, bm)
+    layout["BOOK_STACK"] = (2.15, 0.85, 0.0)
+    layout["BOOK_DONE"] = (2.15, 1.75, 0.0)
+    layout["BOOK_HEIGHT"] = 0.13
+
     # a mug, because every desk has one
     bm, col = start("MUG")
     ret = bmesh.ops.create_cone(bm, cap_ends=True, segments=8, radius1=0.22, radius2=0.22, depth=0.5)
@@ -350,6 +370,12 @@ def write_layout():
     lines += ["\t%s," % vec(k) for k in layout["KEYS"]]
     lines.append("};")
     lines.append("constexpr psyqo::Vec3 NEEDLE[2] = {%s};" % ", ".join(vec(n) for n in layout["NEEDLE"]))
+    lines.append("constexpr psyqo::Vec3 LINE_LAMPS[10] = {")
+    lines += ["\t%s," % vec(k) for k in layout["LINE_LAMPS"]]
+    lines.append("};")
+    for key in ("BOOK_STACK", "BOOK_DONE"):
+        lines.append("constexpr psyqo::Vec3 %s = %s;" % (key, vec(layout[key])))
+    lines.append("constexpr psyqo::FixedPoint<> BOOK_HEIGHT = %s;" % fp(layout["BOOK_HEIGHT"]))
     lines += ["", "} // namespace desk", ""]
     with open(LAYOUT, "w") as f:
         f.write("\n".join(lines))

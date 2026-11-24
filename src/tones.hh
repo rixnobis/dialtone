@@ -7,7 +7,7 @@
 // It sits above everything the engine's SoundManager allocates from the bottom.
 class Tones final {
   public:
-	enum class Cue : uint8_t { None, Digit, Ringback, Busy, Win };
+	enum class Cue : uint8_t { None, Digit, Ringback, Busy, Win, Ring };
 
 	void Init(void);
 	void Tick(uint32_t ticks);
