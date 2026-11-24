@@ -24,7 +24,8 @@ Large business and CEOs are later; the office shows them locked.
 | L1 / R1 | move up / down the book (book open); past either end, your next or previous book |
 | Square | put the number under the cursor on the autodialer's list, or take it off |
 | Square, held 1 s | empty the autodialer's list (book open) |
-| Select | supplies: lines, the autodialer and its parts, phone books |
+| Select | supplies, in three tabs: lines, the autodialer and its parts, phone books |
+| L1 / R1 (supplies open) | switch tab |
 | START | the office: your stats, the books, the categories, the promotion; X there shows the how-to-play card |
 
 ## The screen
@@ -64,8 +65,11 @@ else is left. The book's bottom line takes turns between its keys.
 ## The books
 
 Every number in a book has to be called once (any outcome) to finish it. Books are bought in
-supplies (Select), where each one shows how many numbers it has, its dud chance, its pick-up chance
-and what a call and a sale pay. A category's first book is handed to you. Finishing books puts more
+supplies (Select). Supplies has three tabs, switched with L1/R1: Lines, Autodialer (the dialer and
+its parts) and Books. A tab with something you can afford right now carries an asterisk, so you can
+see that books are for sale. The Books tab lists each book for sale on its own row; the one under
+the cursor shows only how many numbers it has and "up to N% duds". Its pick-up chance and what a
+call and a sale pay you find out by dialing. A category's first book is handed to you. Finishing books puts more
 of them up for sale, so after Elm Street you choose between two.
 
 | Book | Numbers | Duds | Pick-up | Fee | Bonus | Price | For sale after |

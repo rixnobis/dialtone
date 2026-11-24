@@ -59,6 +59,8 @@ static constexpr int16_t c_rowY[ROW_PANEL] = {12, 28, 44, 208, 192, 98, 114};
 static constexpr int16_t PANEL_X = 168, PANEL_Y = 64;
 static constexpr int16_t TOP_BAND_H = 64, BANNER_Y = 92, BANNER_H = 42;
 static constexpr int16_t SHOP_FIRST_Y = 60;
+// title, tabs, up to four items, two description rows
+static constexpr int16_t SHOP_PANEL_ROWS = 8;
 // the autodialer's readout: 8 characters of 6 pixels, two rows
 static constexpr int16_t LED_W = 8 * KeyGlyphs::GLYPH_W + 6, LED_H = 2 * KeyGlyphs::GLYPH_H + 6;
 // opening the office saves only if the last save is at least this old
@@ -297,20 +299,50 @@ uint8_t BookScene::PanelCount(void) const {
 	return m_panelBook == RESIDENTIAL_BOOKS - 1 && m_sim.Category() == 0 && m_sim.NoteState() >= 1 ? n + 1 : n;
 }
 
+// the items of the open category: lines, the autodialer and its parts, the books for sale
 uint8_t BookScene::ShopCount(void) {
 	uint8_t n = 0;
-	for (uint8_t i = 0; i < BookSim::SHOP_ENTRIES; i++) {
-		m_shopItems[n++] = i;
+	if (m_shopCat == 0) {
+		m_shopItems[n++] = 0;
+	} else if (m_shopCat == 1) {
+		for (uint8_t i = 1; i < BookSim::SHOP_ENTRIES; i++) {
+			m_shopItems[n++] = i;
+		}
+	} else {
+		uint8_t books[BOOK_COUNT];
+		uint8_t count = m_sim.ForSaleList(books);
+		for (uint8_t i = 0; i < count; i++) {
+			m_shopItems[n++] = BookSim::SHOP_ENTRIES + books[i];
+		}
 	}
-	uint8_t books[BOOK_COUNT];
-	uint8_t count = m_sim.ForSaleList(books);
-	for (uint8_t i = 0; i < count; i++) {
-		m_shopItems[n++] = BookSim::SHOP_ENTRIES + books[i];
-	}
-	if (m_shopSel >= n) {
+	if (n == 0) {
+		m_shopSel = 0;
+	} else if (m_shopSel >= n) {
 		m_shopSel = n - 1;
 	}
 	return n;
+}
+
+// something in the category you could buy right now (the tab gets an asterisk)
+bool BookScene::ShopCategoryAffordable(uint8_t cat) const {
+	uint8_t books[BOOK_COUNT];
+	if (cat == 2) {
+		uint8_t count = m_sim.ForSaleList(books);
+		for (uint8_t i = 0; i < count; i++) {
+			if (m_sim.Cash() >= BookSim::c_books[books[i]].price) {
+				return true;
+			}
+		}
+		return false;
+	}
+	uint8_t first = cat == 0 ? 0 : 1, last = cat == 0 ? 1 : BookSim::SHOP_ENTRIES;
+	for (uint8_t i = first; i < last; i++) {
+		uint32_t price = m_sim.ShopPrice(i);
+		if (price && !(i >= 2 && !m_sim.HasAutodialer()) && !m_sim.ShopLocked(i) && m_sim.Cash() >= price) {
+			return true;
+		}
+	}
+	return false;
 }
 
 void BookScene::Toast(uint16_t ticks, const char* fmt, ...) {
@@ -351,14 +383,26 @@ void BookScene::HandleShopButton(psyqo::AdvancedPad::Button button) {
 	using Button = psyqo::AdvancedPad::Button;
 	uint8_t count = ShopCount();
 	switch (button) {
+		case Button::L1:
+		case Button::R1:
+			m_shopCat = (m_shopCat + (button == Button::L1 ? SHOP_CATS - 1 : 1)) % SHOP_CATS;
+			m_shopSel = 0;
+			break;
 		case Button::Up:
-			m_shopSel = (m_shopSel + count - 1) % count;
+			if (count) {
+				m_shopSel = (m_shopSel + count - 1) % count;
+			}
 			break;
 		case Button::Down:
-			m_shopSel = (m_shopSel + 1) % count;
+			if (count) {
+				m_shopSel = (m_shopSel + 1) % count;
+			}
 			break;
 		case Button::Cross:
 		case Button::Square: {
+			if (!count) {
+				break;
+			}
 			uint8_t item = m_shopItems[m_shopSel];
 			if (item >= BookSim::SHOP_ENTRIES) {
 				uint8_t book = item - BookSim::SHOP_ENTRIES;
@@ -425,6 +469,7 @@ void BookScene::AfterPromotion(void) {
 	m_panelSel = 0;
 	m_panel = m_shop = false;
 	m_shopSel = 0;
+	m_shopCat = 0;
 	m_shownCash = m_sim.Cash();
 	m_bannerTimer = 0;
 	ClearPanel();
@@ -920,7 +965,18 @@ void BookScene::UpdatePanel(void) {
 void BookScene::UpdateShop(void) {
 	uint8_t count = ShopCount();
 	uint8_t r = ROW_OVER + (SHOP_FIRST_Y - 12) / 16;
-	SetRow(r++, c_amber, "SUPPLIES  $%-10d SELECT close", m_sim.Cash());
+	static const char* const c_catNames[SHOP_CATS] = {"LINES", "AUTODIALER", "BOOKS"};
+	SetRow(r++, c_amber, "SUPPLIES: %-10s $%d", c_catNames[m_shopCat], m_sim.Cash());
+	{
+		char tabs[48];
+		int len = snprintf(tabs, sizeof(tabs), "L1");
+		for (uint8_t c = 0; c < SHOP_CATS; c++) {
+			len += snprintf(tabs + len, sizeof(tabs) - len, c == m_shopCat ? " [%s%s]" : " %s%s", 
+							c == 0 ? "Lines" : c == 1 ? "Dialer" : "Books", ShopCategoryAffordable(c) ? "*" : "");
+		}
+		snprintf(tabs + len, sizeof(tabs) - len, " R1");
+		SetRow(r++, c_white, "%s", tabs);
+	}
 	for (uint8_t s = 0; s < count; s++) {
 		char cursor = m_shopSel == s ? '>' : ' ';
 		uint8_t i = m_shopItems[s];
@@ -963,12 +1019,20 @@ void BookScene::UpdateShop(void) {
 		}
 	}
 	// what the selected thing does
+	if (!count) {
+		SetRow(r++, c_grey, " No books for sale yet.");
+		SetRow(r++, c_grey, " Finish a book to see more.");
+		for (; r < ROW_OVER + OVER_ROWS; r++) {
+			SetRow(r, c_white, "");
+		}
+		return;
+	}
 	uint8_t i = m_shopItems[m_shopSel];
 	if (i >= BookSim::SHOP_ENTRIES) {
 		uint8_t b = i - BookSim::SHOP_ENTRIES;
 		const auto& book = BookSim::c_books[b];
-		SetRow(r++, c_green, "%d nos %d%% dud %d%% pick-up $%d+%d", book.entries, book.dudPercent,
-			   m_sim.PickupPercent(b), book.fee, book.bonus);
+		SetRow(r++, c_green, " %d numbers", book.entries);
+		SetRow(r++, c_green, " up to %d%% duds", book.dudPercent);
 		for (; r < ROW_OVER + OVER_ROWS; r++) {
 			SetRow(r, c_white, "");
 		}
@@ -1369,7 +1433,7 @@ void BookScene::frame() {
 	int16_t bottom = m_toastTimer || m_save.WritingFile() ? c_rowY[ROW_TOAST] : c_rowY[ROW_HAND];
 	DrawBand(0, bottom - 4, 320, 240 - (bottom - 4), c_band);
 	if (m_shop) {
-		int16_t h = 16 * (ShopCount() + 2) + 4;
+		int16_t h = 16 * SHOP_PANEL_ROWS + 4;
 		DrawBand(0, SHOP_FIRST_Y - 2, 320, h, c_band);
 		DrawBand(0, SHOP_FIRST_Y - 2, 320, h, c_band);
 	} else if (m_panel) {

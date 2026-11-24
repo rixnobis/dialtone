@@ -66,6 +66,8 @@ class BookScene final : public psyqo::Scene, public BookListener {
 	void SetRow(uint8_t row, psyqo::Color colour, const char* fmt, ...);
 	uint8_t PanelCount(void) const; // entries in the panel's book, plus the note once it is there
 	uint8_t ShopCount(void);		// fills m_shopItems: the fixed items, then the books for sale
+	bool ShopCategoryAffordable(uint8_t cat) const;
+	static constexpr uint8_t SHOP_CATS = 3;
 	bool Audible(uint8_t line) const; // the hand line, and the one autodialer call its readout shows
 	void AfterPromotion(void);
 
@@ -105,7 +107,8 @@ class BookScene final : public psyqo::Scene, public BookListener {
 	uint8_t m_panelSel = 0;
 	uint8_t m_panelBook = 0;
 	bool m_shop = false;
-	uint8_t m_shopSel = 0;
+	uint8_t m_shopSel = 0; // within the open category
+	uint8_t m_shopCat = 0; // 0 lines, 1 autodialer, 2 books
 	uint8_t m_shopItems[SHOP_MAX] = {0}; // < SHOP_ENTRIES: a fixed item, else SHOP_ENTRIES + book
 	bool m_menu = false;
 	uint8_t m_promo = 0; // 1 the offer, 2 the perks (the promotion has happened)
