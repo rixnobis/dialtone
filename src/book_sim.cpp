@@ -21,7 +21,12 @@ static constexpr uint16_t NO_ANSWER_TICKS = 330;
 static constexpr uint16_t PITCH_TICKS = 150;
 static constexpr uint16_t HANG_UP_TALK_TICKS = 40;
 static constexpr uint16_t NOTE_RING_TICKS = 150;
-static constexpr uint16_t FIRST_SUPERVISOR_TICKS = 30 * 60;
+static constexpr uint16_t FIRST_SUPERVISOR_TICKS = 60 * 60;
+// measured on book 1 (9 hand calls, seed 12345, Redux): the call itself averages 188 ticks (3.1 s) after
+// the 7th digit, and walking the keypad cursor is 12.5 presses per number. At 2 to 3 presses a second by
+// hand that is 8 to 10 s a call, 18 to 23 calls in the shortest corp gap (180 s, longer when the corp
+// clock pauses for a pitch). 8 is under half of the slow end; the cap is about 60% of the fast end
+static constexpr uint16_t QUOTA_PER_LINE_BASE = 8, QUOTA_PER_LINE_STEP = 2, QUOTA_PER_LINE_MAX = 14;
 static constexpr uint32_t LINE_BASE_PRICE = 30;
 static constexpr uint32_t AUTODIALER_PRICE = 25;
 static constexpr uint32_t MOTOR_PRICES[BookSim::MAX_MOTOR] = {60, 150};
@@ -180,6 +185,7 @@ bool BookSim::PressDigit(char digit) {
 		line.digitCount = 0;
 		line.outcome = CallOutcome::None;
 		line.paid = 0;
+		printf("DIALTONE: hand start line=%d t=%d\n", free, m_simTick);
 	}
 	auto& line = m_lines[m_handLine];
 	if (line.state != BookLineState::Dialing || line.digitCount >= BOOK_NUMBER_LENGTH) {
@@ -190,6 +196,7 @@ bool BookSim::PressDigit(char digit) {
 	m_listener->OnDigit(m_handLine, digit);
 	if (line.digitCount == BOOK_NUMBER_LENGTH) {
 		line.timer = CONNECT_TICKS;
+		printf("DIALTONE: hand dialed line=%d t=%d\n", m_handLine, m_simTick);
 	}
 	return true;
 }
@@ -314,8 +321,8 @@ void BookSim::EndCall(uint8_t index, CallOutcome outcome) {
 			m_listener->OnBookDone(line.book);
 		}
 	}
-	printf("DIALTONE: call end line=%d machine=%d book=%d entry=%d outcome=%d paid=%d calls=%d\n", index,
-		   line.byMachine, line.book + 1, line.entry, uint8_t(outcome), line.paid, m_calls);
+	printf("DIALTONE: call end line=%d machine=%d book=%d entry=%d outcome=%d paid=%d calls=%d t=%d\n", index,
+		   line.byMachine, line.book + 1, line.entry, uint8_t(outcome), line.paid, m_calls, m_simTick);
 	if (outcome == CallOutcome::Sold) {
 		m_listener->OnSold(index);
 	} else {
@@ -479,6 +486,10 @@ void BookSim::TickSupervisor(void) {
 	if (m_noteState == 2) {
 		return; // the note's call has the room to itself
 	}
+	// someone listening on your own line holds the corp's clock: their call never comes mid-pitch
+	if (!m_supRinging && m_handLine >= 0 && m_lines[m_handLine].state == BookLineState::Talking) {
+		return;
+	}
 	if (--m_supTimer) {
 		return;
 	}
@@ -491,7 +502,7 @@ void BookSim::TickSupervisor(void) {
 	}
 	// nobody picked up
 	m_supRinging = false;
-	m_supTimer = 40 * 60;
+	m_supTimer = 60 * 60;
 	uint32_t fine = eastl::min<uint32_t>(MISSED_CALL_FINE, m_cash);
 	m_cash -= fine;
 	SetCorp("You missed my call. -$%d.", fine);
@@ -505,10 +516,22 @@ bool BookSim::AnswerSupervisor(void) {
 	}
 	m_supRinging = false;
 	m_listener->OnSupervisorRing(false);
-	uint16_t next = eastl::min<uint16_t>(10 + 5 * m_supervisorCalls, 40);
+	// the quota is per line you own, so it stays reachable by hand on one line; m_supervisorCalls is
+	// your standing with the corp: up one per quota met, down one per quota missed
+	bool met = m_quota != 0 && QuotaDone() >= m_quota;
+	if (m_quota != 0) {
+		if (met) {
+			m_supervisorCalls++;
+		} else if (m_supervisorCalls) {
+			m_supervisorCalls--;
+		}
+	}
+	uint16_t perLine = eastl::min<uint16_t>(QUOTA_PER_LINE_BASE + QUOTA_PER_LINE_STEP * m_supervisorCalls,
+											QUOTA_PER_LINE_MAX);
+	uint16_t next = perLine * m_lineCount;
 	if (m_quota == 0) {
 		SetCorp("Welcome aboard. %d calls by my next.", next);
-	} else if (QuotaDone() >= m_quota) {
+	} else if (met) {
 		uint32_t bonus = m_quota / 2;
 		Pay(bonus);
 		SetCorp("Quota met, +$%d. Now %d calls.", bonus, next);
@@ -520,8 +543,7 @@ bool BookSim::AnswerSupervisor(void) {
 	printf("DIALTONE: supervisor answered quota %d/%d next=%d cash=%d\n", QuotaDone(), m_quota, next, m_cash);
 	m_quota = next;
 	m_quotaFrom = m_calls;
-	m_supervisorCalls++;
-	m_supTimer = (80 + m_rand->rand(31)) * 60;
+	m_supTimer = (180 + m_rand->rand(61)) * 60;
 	return true;
 }
 
@@ -567,6 +589,7 @@ bool BookSim::Buy(uint8_t item) {
 
 void BookSim::Tick(uint32_t ticks) {
 	while (ticks--) {
+		m_simTick++;
 		for (uint8_t i = 0; i < m_lineCount; i++) {
 			TickLine(i);
 		}

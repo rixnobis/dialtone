@@ -56,8 +56,8 @@ static constexpr int16_t c_rowY[ROW_PANEL] = {12, 28, 44, 208, 192, 98, 114};
 static constexpr int16_t PANEL_X = 168, PANEL_Y = 64;
 static constexpr int16_t TOP_BAND_H = 64, BANNER_Y = 92, BANNER_H = 42;
 static constexpr int16_t SHOP_FIRST_Y = 60;
-static constexpr uint16_t AUTOSAVE_SECONDS = 120;
-static constexpr uint16_t SAVE_QUIET_TICKS = 4 * 60;
+// opening the office saves only if the last save is at least this old
+static constexpr uint16_t OFFICE_SAVE_SECONDS = 30;
 static constexpr uint16_t NOTE_LINE_TICKS = 170;
 
 static constexpr const char* c_intro[OVER_ROWS] = {
@@ -187,7 +187,7 @@ void BookScene::start(StartReason reason) {
 	m_shownCash = m_sim.Cash();
 	m_panelBook = m_sim.OpenBook();
 	m_lastFrame = g_madnightEngine.gpu().getFrameCount();
-	m_nextSaveAt = m_playSeconds + AUTOSAVE_SECONDS;
+	m_lastSaveAt = m_playSeconds;
 	printf("DIALTONE: books ready\n");
 }
 
@@ -291,7 +291,9 @@ void BookScene::Banner(uint16_t ticks, psyqo::Color colour, const char* top, con
 
 void BookScene::SaveNow(void) {
 	m_save.Save(m_sim, m_playSeconds);
-	m_nextSaveAt = m_playSeconds + AUTOSAVE_SECONDS;
+	m_savePending = false;
+	m_lastSaveAt = m_playSeconds;
+	printf("DIALTONE: save started played=%ds\n", m_playSeconds);
 }
 
 void BookScene::ClearOverlay(void) {
@@ -345,7 +347,6 @@ void BookScene::HandleShopButton(psyqo::AdvancedPad::Button button) {
 
 void BookScene::HandleButton(psyqo::AdvancedPad::Button button) {
 	using Button = psyqo::AdvancedPad::Button;
-	m_quietTicks = 0;
 	if (m_intro) {
 		if (button == Button::Cross || button == Button::Start) {
 			m_intro = false;
@@ -359,7 +360,7 @@ void BookScene::HandleButton(psyqo::AdvancedPad::Button button) {
 			m_noteScene = false;
 			m_sim.NoteSceneOver();
 			ClearOverlay();
-			SaveNow();
+			RequestSave();
 			Toast(300, "Keep dialing. They are watching.");
 			printf("DIALTONE: to be continued dismissed\n");
 		}
@@ -405,6 +406,7 @@ void BookScene::HandleButton(psyqo::AdvancedPad::Button button) {
 		case Button::R2:
 			if (m_sim.AnswerSupervisor()) {
 				m_tones.Line(1, Tones::Cue::None);
+				RequestSave();
 			}
 			break;
 		case Button::Triangle:
@@ -445,6 +447,9 @@ void BookScene::HandleButton(psyqo::AdvancedPad::Button button) {
 			break;
 		case Button::Start:
 			m_menu = true;
+			if (m_playSeconds - m_lastSaveAt >= OFFICE_SAVE_SECONDS) {
+				RequestSave(); // the game is paused in the office: a safe moment for the card
+			}
 			m_shop = false;
 			m_panel = false;
 			ClearPanel();
@@ -458,6 +463,11 @@ void BookScene::HandleButton(psyqo::AdvancedPad::Button button) {
 uint8_t BookScene::ToneSlot(uint8_t line) const { return m_sim.GetLine(line).byMachine ? 1 : 0; }
 
 void BookScene::OnDigit(uint8_t line, char digit) {
+	uint8_t slot = ToneSlot(line);
+	if (m_toneStop[slot]) {
+		m_tones.Line(slot, Tones::Cue::None);
+		m_toneStop[slot] = 0;
+	}
 	m_tones.Digit(digit);
 	m_lastKey = digit;
 	m_keyFlash = 6;
@@ -468,6 +478,7 @@ void BookScene::OnRing(uint8_t line) {
 	if (slot == 1 && m_sim.SupervisorRinging()) {
 		return;
 	}
+	m_toneStop[slot] = 0;
 	m_tones.Line(slot, Tones::Cue::Ringback);
 }
 
@@ -476,6 +487,7 @@ void BookScene::OnDead(uint8_t line) {
 	if (slot == 1 && m_sim.SupervisorRinging()) {
 		return;
 	}
+	m_toneStop[slot] = 0;
 	m_tones.Line(slot, Tones::Cue::Busy);
 }
 
@@ -484,9 +496,12 @@ void BookScene::OnHangUp(uint8_t line) {
 	if (slot == 1 && m_sim.SupervisorRinging()) {
 		return;
 	}
-	// a dead number keeps its fast busy for a moment after the call is over
+	// a dead number keeps its fast busy for a moment after the call is over, then stops
 	if (m_sim.GetLine(line).outcome != CallOutcome::NotInService) {
 		m_tones.Line(slot, Tones::Cue::None);
+		m_toneStop[slot] = 0;
+	} else {
+		m_toneStop[slot] = DUD_TONE_TICKS;
 	}
 }
 
@@ -506,7 +521,13 @@ void BookScene::OnSold(uint8_t line) {
 		   m_sim.Cash(), m_sim.Calls(), m_sim.Connects());
 }
 
-void BookScene::OnSupervisorRing(bool ringing) { m_tones.Line(1, ringing ? Tones::Cue::Ring : Tones::Cue::None); }
+void BookScene::OnSupervisorRing(bool ringing) {
+	m_toneStop[1] = 0;
+	if (!ringing) {
+		RequestSave(); // answered or missed, the corp call is over
+	}
+	m_tones.Line(1, ringing ? Tones::Cue::Ring : Tones::Cue::None);
+}
 
 void BookScene::OnBookDone(uint8_t book) {
 	char top[40], bottom[40];
@@ -518,7 +539,7 @@ void BookScene::OnBookDone(uint8_t book) {
 	}
 	Banner(240, c_green, top, bottom);
 	m_tones.Win();
-	m_nextSaveAt = m_playSeconds;
+	RequestSave();
 }
 
 void BookScene::OnNote(void) {
@@ -532,7 +553,7 @@ void BookScene::OnNote(void) {
 	m_panelSel = BookSim::c_books[m_panelBook].entries;
 	m_panel = false;
 	ClearPanel();
-	m_nextSaveAt = m_playSeconds;
+	RequestSave();
 }
 
 void BookScene::OnNoteAnswered(void) {
@@ -742,10 +763,10 @@ void BookScene::UpdateMenu(void) {
 	SetRow(r++, c_grey, "SMALL BUSINESS   locked: promotion");
 	SetRow(r++, c_grey, "LARGE BUSINESS   locked: promotion");
 	SetRow(r++, c_grey, "CEOS             locked: promotion");
-	if (m_save.Writing()) {
-		SetRow(r++, c_grey, "Saving to memory card 1...");
+	if (m_save.WritingFile()) {
+		SetRow(r++, c_amber, "SAVING to card 1 - hands off");
 	} else if (m_save.CardOk()) {
-		SetRow(r++, c_grey, "Card 1: autosave every 2 min");
+		SetRow(r++, c_grey, "Card 1: saves at pauses");
 	} else {
 		SetRow(r++, c_grey, "No memory card in slot 1: not saving");
 	}
@@ -811,7 +832,11 @@ void BookScene::UpdateText(void) {
 		   autod);
 
 	UpdateHandRow();
-	SetRow(ROW_TOAST, c_amber, "%s", m_toastTimer ? m_toast : "");
+	if (m_save.WritingFile()) {
+		SetRow(ROW_TOAST, c_red, "   SAVING to memory card - hands off");
+	} else {
+		SetRow(ROW_TOAST, c_amber, "%s", m_toastTimer ? m_toast : "");
+	}
 
 	bool banner = m_bannerTimer && !m_panel && !m_shop;
 	SetRow(ROW_BANNER1, m_bannerColour, "%s", banner ? m_banner[0] : "");
@@ -850,10 +875,11 @@ void BookScene::TickClock(void) {
 		m_frameAcc -= rate;
 		m_playSeconds++;
 	}
-	// the card has the pad to itself while it writes (about 3 s): only once the pad has been left alone
-	// for a while, and not while you are on a call or the corp is ringing
-	if (!m_intro && !m_noteScene && m_sim.HandLine() < 0 && !m_sim.SupervisorRinging() &&
-		m_quietTicks >= SAVE_QUIET_TICKS && m_playSeconds >= m_nextSaveAt) {
+	// the card has the pad to itself while it writes (about 3 s), so a save waits for a natural pause:
+	// a book finished, the office opened, a corp call answered or missed, the note. In play it also waits
+	// for your line to be free and the shop and book panel to be shut; the office pauses the game anyway
+	bool calm = m_menu || (m_sim.HandLine() < 0 && !m_sim.SupervisorRinging() && !m_shop && !m_panel);
+	if (m_savePending && !m_save.Writing() && !m_intro && !m_noteScene && calm) {
 		SaveNow();
 	}
 }
@@ -866,7 +892,6 @@ void BookScene::frame() {
 	}
 
 	m_flashTimer += deltaTime;
-	m_quietTicks = eastl::min<uint32_t>(m_quietTicks + deltaTime, 0xffff);
 	TickClock();
 	bool paused = m_intro || m_menu;
 	if (!paused) {
@@ -875,6 +900,14 @@ void BookScene::frame() {
 		}
 		m_tones.Tick(deltaTime);
 		m_keyFlash = m_keyFlash > deltaTime ? m_keyFlash - deltaTime : 0;
+		for (uint8_t slot = 0; slot < 2; slot++) {
+			if (m_toneStop[slot]) {
+				m_toneStop[slot] = m_toneStop[slot] > deltaTime ? m_toneStop[slot] - deltaTime : 0;
+				if (!m_toneStop[slot]) {
+					m_tones.Line(slot, Tones::Cue::None);
+				}
+			}
+		}
 		m_toastTimer = m_toastTimer > deltaTime ? m_toastTimer - deltaTime : 0;
 		m_bannerTimer = m_bannerTimer > deltaTime ? m_bannerTimer - deltaTime : 0;
 		if (m_noteScene && m_noteStep < 6) {
@@ -935,7 +968,7 @@ void BookScene::frame() {
 		DrawKeyDigits();
 	}
 	DrawBand(0, 0, 320, TOP_BAND_H, c_band);
-	int16_t bottom = m_toastTimer ? c_rowY[ROW_TOAST] : c_rowY[ROW_HAND];
+	int16_t bottom = m_toastTimer || m_save.WritingFile() ? c_rowY[ROW_TOAST] : c_rowY[ROW_HAND];
 	DrawBand(0, bottom - 4, 320, 240 - (bottom - 4), c_band);
 	if (m_shop) {
 		DrawBand(0, SHOP_FIRST_Y - 2, 320, 16 * 6 + 4, c_band);

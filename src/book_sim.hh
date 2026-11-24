@@ -185,6 +185,7 @@ class BookSim final {
 	bool m_supRinging = false;
 	uint16_t m_supTimer = 0;
 	uint16_t m_supervisorCalls = 0;
+	uint32_t m_simTick = 0; // ticks since the scene started, for the log
 	uint16_t m_quota = 0;
 	uint32_t m_quotaFrom = 0;
 	char m_corpLine[40] = {0};

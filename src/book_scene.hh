@@ -53,6 +53,7 @@ class BookScene final : public psyqo::Scene, public BookListener {
 	void DrawBand(int16_t x, int16_t y, int16_t w, int16_t h, psyqo::Color colour);
 	void TickClock(void);
 	void SaveNow(void);
+	void RequestSave(void) { m_savePending = true; }
 	void Toast(uint16_t ticks, const char* fmt, ...);
 	void Banner(uint16_t ticks, psyqo::Color colour, const char* top, const char* bottom);
 	void SetRow(uint8_t row, psyqo::Color colour, const char* fmt, ...);
@@ -84,6 +85,8 @@ class BookScene final : public psyqo::Scene, public BookListener {
 	uint8_t m_cursorX = 0, m_cursorY = 0;
 	char m_lastKey = 0;
 	uint8_t m_keyFlash = 0;
+	uint16_t m_toneStop[2] = {0, 0}; // a dud's fast busy stops when this runs out
+	static constexpr uint16_t DUD_TONE_TICKS = 90;
 	uint16_t m_flashTimer = 0;
 
 	bool m_intro = true;
@@ -110,6 +113,6 @@ class BookScene final : public psyqo::Scene, public BookListener {
 	uint32_t m_playSeconds = 0;
 	uint32_t m_lastFrame = 0;
 	uint32_t m_frameAcc = 0;
-	uint32_t m_nextSaveAt = 0;
-	uint16_t m_quietTicks = 0; // since the last button press
+	bool m_savePending = false; // saves wait for a natural pause, never an idle timer
+	uint32_t m_lastSaveAt = 0;  // play seconds when the last write started
 };

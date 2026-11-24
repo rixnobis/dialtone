@@ -46,7 +46,8 @@ happens:
 | no answer (rings 5.5 s) | half of the rest | fee | `n/a` |
 | hello, not interested, click | the other half | fee | `hung` |
 
-A dud stays a dud: calling it again is wasted time. Somebody who already listened once hangs up on
+A dud answers with the fast busy tone, which stops after a second and a half or as soon as you
+dial the next digit. A dud stays a dud: calling it again is wasted time. Somebody who already listened once hangs up on
 you every time after, so a `SALE` number only pays the fee again. A number that is in no open book
 is not in service. You can hang up (L2) at any time, but a call you hang up on pays nothing.
 
@@ -95,13 +96,16 @@ the same fee and bonus as a call you make yourself.
 
 ## The corp calls you
 
-About 30 seconds in, and then every 80 to 110 seconds, the corp line rings (the lamps flash, the
-second row turns red). R2 answers it. The first call sets a quota: 10 calls before the next one,
-5 more each call after, up to 40. When it calls again:
+About a minute in, and then every 3 to 4 minutes, the corp line rings (the lamps flash, the
+second row turns red). R2 answers it. Its clock stops while somebody is listening on your own line,
+so it never cuts into a pitch. The first call sets a quota of 8 calls per line you own before the
+next one. Each quota you meet raises it by 2 calls per line (up to 14 per line), each one you miss
+lowers it by 2 again. A call by hand takes about 8 to 10 seconds, dialing included, so 8 calls fit
+easily before the corp calls back. When it calls again:
 
 - quota met: you get half the quota in dollars;
 - quota missed: you lose a dollar per missing call, never below zero;
-- you do not answer within 8 seconds: you lose $3 and it calls back 40 seconds later, the quota
+- you do not answer within 8 seconds: you lose $3 and it calls back a minute later, the quota
   still standing.
 
 Between calls the corp line says something motivational every 25 seconds or so.
@@ -128,10 +132,13 @@ desk, where everything still works.
 ## Saving
 
 Phone books has its own save file on the memory card in slot 1 (DIALBOOK), separate from the radio
-game's (DIALTONE), so the two never overwrite each other. It saves every two minutes, but only once
-the pad has been left alone for four seconds and you are not on a call, because the pad does not
-answer while the card is being written (about four seconds). A book finished and the note turning
-up save at the next quiet moment.
+game's (DIALTONE), so the two never overwrite each other. The pad does not answer while the card is
+being written (about four seconds), so it only saves at a natural pause: when a book is finished,
+when the corp call ends (answered or missed), when the note turns up and when its call is over, and
+when you open the office with START (if the last save is at least 30 seconds old; the game is paused
+there). Outside the office a save also waits until your line is free and the shop and the book are
+shut. While it writes, the bottom of the screen says `SAVING to memory card - hands off` in red
+(in the office, the card line says so instead).
 
 ## Numbers in one place
 

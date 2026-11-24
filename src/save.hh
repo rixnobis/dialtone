@@ -22,6 +22,8 @@ class SaveSlot {
 
 	Status BootStatus(void) const { return m_bootStatus; }
 	bool Writing(void) const { return m_inFlight; }
+	// a real file write (the card owns the pad until it ends), not the quick probe for a card
+	bool WritingFile(void) const { return m_inFlight && m_cardOk; }
 	bool CardOk(void) const { return m_cardOk; }
 	uint32_t SavesDone(void) const { return m_saves; }
 	uint32_t LastSavedAt(void) const { return m_lastSavedAt; } // play seconds
