@@ -13,11 +13,12 @@ code for Reputation and perks that make the next run faster. Numbers go past a b
 going; progress saves to the memory card.
 
 **Phone books** is the second: you are stuck making cold calls for a corporation that never says
-what it sells. It pays a little per call and more when somebody listens. Work through the
-residential phone books number by number, buy more lines, hand a bad autodialer a list, answer
-the corp when it rings about your quota, and when the last book is done a note turns up from
-somebody higher up who wants out too. This is phase 1 of that idea: the residential books and the
-first note.
+what it sells. It pays a little per call and more for a sale. Buy phone books and work through
+them number by number, buy lines and an autodialer that runs several calls at once, answer the
+corp when it rings about your quota, and when the residential books are done a note turns up from
+somebody higher up who wants out too. Then take the promotion: it pays standing for permanent
+perks and starts you again in small business. Residential and the first small business book are
+in; the categories above are later.
 
 How to play, every upgrade and every number: [radio contests](docs/manual.md),
 [phone books](docs/phonebooks.md).

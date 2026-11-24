@@ -2,6 +2,7 @@
 
 #include "madnight.hh"
 
+#include <EASTL/algorithm.h>
 #include <psyqo/xprintf.h>
 #include <stddef.h>
 
@@ -43,6 +44,13 @@ uint32_t SaveSlot::Checksum(const uint8_t* file, uint16_t length) {
 }
 
 SaveSlot::Status SaveSlot::Load(void* payload, uint16_t size, uint32_t& playSeconds) {
+	Format format = {.version = m_version, .size = size};
+	uint8_t which;
+	return Load(&format, 1, payload, playSeconds, which);
+}
+
+SaveSlot::Status SaveSlot::Load(const Format* formats, uint8_t count, void* payload, uint32_t& playSeconds,
+								uint8_t& which) {
 	auto& card = g_madnightEngine.m_memoryCardHelper;
 	MC::Error state = card.GetCardState(SAVE_PORT);
 	if (state != MC::Error::OK) {
@@ -60,21 +68,35 @@ SaveSlot::Status SaveSlot::Load(void* payload, uint16_t size, uint32_t& playSeco
 		return m_bootStatus;
 	}
 
-	uint16_t fileSize = FileSize(size);
+	// read as much as the biggest version needs, then go by the version in the header
+	uint16_t readSize = 0;
+	for (uint8_t i = 0; i < count; i++) {
+		readSize = eastl::max(readSize, FileSize(formats[i].size));
+	}
 	uint32_t length = 0;
-	err = card.ReadFile(SAVE_PORT, m_name, m_file, fileSize, &length);
+	err = card.ReadFile(SAVE_PORT, m_name, m_file, readSize, &length);
 	if (err != MC::Error::OK) {
 		m_bootStatus = Status::Error;
 		printf("DIALTONE: save read failed %s\n", MC::errorMessage(err));
 		return m_bootStatus;
 	}
-	uint32_t magic, sum;
+	uint32_t magic, sum = 0;
 	uint16_t version, stored;
 	__builtin_memcpy(&magic, m_file, 4);
 	__builtin_memcpy(&version, m_file + 4, 2);
 	__builtin_memcpy(&stored, m_file + 6, 2);
-	__builtin_memcpy(&sum, m_file + fileSize - 4, 4);
-	if (length < fileSize || magic != m_magic || version != m_version || stored != fileSize ||
+	which = count;
+	for (uint8_t i = 0; i < count; i++) {
+		if (formats[i].version == version) {
+			which = i;
+		}
+	}
+	uint16_t size = which < count ? formats[which].size : 0;
+	uint16_t fileSize = FileSize(size);
+	if (which < count) {
+		__builtin_memcpy(&sum, m_file + fileSize - 4, 4);
+	}
+	if (which == count || length < fileSize || magic != m_magic || stored != fileSize ||
 		sum != Checksum(m_file, fileSize - 4)) {
 		m_bootStatus = Status::Corrupt;
 		printf("DIALTONE: save ignored, bad header or checksum (len=%d magic=%08x)\n", length, magic);
@@ -153,14 +175,27 @@ void SaveGame::Save(const Sim& sim, uint32_t playSeconds) {
 	SaveSlot::Save(&data, sizeof(data), playSeconds);
 }
 
-BookSaveGame::BookSaveGame() : SaveSlot("BASCUS-00000DIALBOOK", 0x4b424c44 /* "DLBK" */, 1) {}
+// version 2: bought books, the multi-line autodialer, promotions. Version 1 (phase 1) saves are
+// read and migrated, and the next save writes them back as version 2
+BookSaveGame::BookSaveGame() : SaveSlot("BASCUS-00000DIALBOOK", 0x4b424c44 /* "DLBK" */, 2) {}
 
 SaveSlot::Status BookSaveGame::Load(BookSim& sim, uint32_t& playSeconds) {
-	BookSave data;
-	Status status = SaveSlot::Load(&data, sizeof(data), playSeconds);
-	if (status == Status::Loaded) {
-		sim.Load(data);
+	static constexpr Format formats[] = {{.version = 2, .size = sizeof(BookSave)},
+										 {.version = 1, .size = sizeof(BookSaveV1)}};
+	union {
+		BookSave v2;
+		BookSaveV1 v1;
+	} data;
+	uint8_t which = 0;
+	Status status = SaveSlot::Load(formats, 2, &data, playSeconds, which);
+	if (status != Status::Loaded) {
+		return status;
 	}
+	if (which == 1) {
+		BookSaveV1 old = data.v1;
+		BookSim::Migrate(old, data.v2);
+	}
+	sim.Load(data.v2);
 	return status;
 }
 

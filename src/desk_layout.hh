@@ -43,6 +43,8 @@ constexpr psyqo::Vec3 LINE_LAMPS[10] = {
 };
 constexpr psyqo::Vec3 BOOK_STACK = {2.1500_ws, -0.0000_ws, 0.8500_ws};
 constexpr psyqo::Vec3 BOOK_DONE = {2.1500_ws, -0.0000_ws, 1.7500_ws};
+constexpr psyqo::Vec3 AUTOBOX_LED = {0.0250_ws, -0.2700_ws, 0.9800_ws};
+constexpr psyqo::Vec3 AUTOBOX_LAMP = {0.3500_ws, -0.5000_ws, 1.2000_ws};
 constexpr psyqo::FixedPoint<> BOOK_HEIGHT = 0.1300_ws;
 
 } // namespace desk

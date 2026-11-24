@@ -25,7 +25,8 @@ psyqo::Coroutine<> DialtoneGame::InitialLoad(void) {
 	static ModeScene modeScene(&phoneScene, &bookScene);
 	static constexpr const char* meshes[] = {"DESK",	 "PHONE",  "RADIO",	   "MUG",	   "HANDSET",  "NEEDLE",
 											 "LAMP",	 "LAMPLIT", "KEY",	   "KEYSEL",   "KEYLIT",   "REDIAL",
-											 "PHONE2",	 "AUTODIAL", "LINEBOARD", "BOOK",	   "BOOKDONE"};
+											 "PHONE2",	 "AUTODIAL", "LINEBOARD", "BOOK",	   "BOOKDONE",
+											 "AUTOBOX"};
 	eastl::vector<LoadQueue> files;
 	for (auto mesh : meshes) {
 		LoadQueue entry;

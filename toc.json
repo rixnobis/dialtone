@@ -26,6 +26,10 @@
             "name": "MODELS/AUTODIAL.MB"
         },
         {
+            "path": "assets/MODELS/AUTOBOX.MB",
+            "name": "MODELS/AUTOBOX.MB"
+        },
+        {
             "path": "assets/MODELS/DESK.MB",
             "name": "MODELS/DESK.MB"
         },

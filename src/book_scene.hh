@@ -15,8 +15,8 @@
 
 class GameObject;
 
-// Phone books mode: the same desk and phone, a line board and a stack of phone books where the
-// radio was, the open book as a panel on the right (TRIANGLE)
+// Phone books mode: the same desk and phone, a line board, the phone books you own and the
+// autodialer's box, the book you are working as a panel on the right (TRIANGLE)
 class BookScene final : public psyqo::Scene, public BookListener {
 	void start(StartReason reason) override;
 	void teardown(TearDownReason reason) override;
@@ -35,30 +35,39 @@ class BookScene final : public psyqo::Scene, public BookListener {
 
 	static constexpr uint8_t KEYS = 12;
 	static constexpr uint8_t PANEL_ENTRIES = 6;
+	static constexpr uint8_t SHOP_MAX = BookSim::SHOP_ENTRIES + BOOK_COUNT;
 
 	void CreateDesk(void);
 	void UpdateDesk(void);
 	void HandleButton(psyqo::AdvancedPad::Button button);
 	void HandleShopButton(psyqo::AdvancedPad::Button button);
+	void HandleMenuButton(psyqo::AdvancedPad::Button button);
+	void HandlePromoButton(psyqo::AdvancedPad::Button button);
+	void MovePanel(int8_t step);
+	void JumpToUncalled(void);
 	void UpdateText(void);
 	void UpdateHandRow(void);
 	void UpdatePanel(void);
 	void UpdateShop(void);
 	void UpdateMenu(void);
+	void UpdatePromo(void);
 	void UpdateOverlayText(const char* const* rows, uint8_t count, bool blinkLast);
 	void UpdateNoteScene(void);
 	void ClearOverlay(void);
 	void ClearPanel(void);
 	void DrawKeyDigits(void);
-	void DrawBand(int16_t x, int16_t y, int16_t w, int16_t h, psyqo::Color colour);
+	void DrawReadout(void);
+	void DrawBand(int16_t x, int16_t y, int16_t w, int16_t h, psyqo::Color colour, bool semiTrans = true);
 	void TickClock(void);
 	void SaveNow(void);
 	void RequestSave(void) { m_savePending = true; }
 	void Toast(uint16_t ticks, const char* fmt, ...);
 	void Banner(uint16_t ticks, psyqo::Color colour, const char* top, const char* bottom);
 	void SetRow(uint8_t row, psyqo::Color colour, const char* fmt, ...);
-	uint8_t PanelCount(void) const; // entries in the open book, plus the note once it is there
-	uint8_t ToneSlot(uint8_t line) const;
+	uint8_t PanelCount(void) const; // entries in the panel's book, plus the note once it is there
+	uint8_t ShopCount(void);		// fills m_shopItems: the fixed items, then the books for sale
+	bool Audible(uint8_t line) const; // the hand line, and the one autodialer call its readout shows
+	void AfterPromotion(void);
 
 	BookSim m_sim;
 	Tones m_tones;
@@ -74,11 +83,11 @@ class BookScene final : public psyqo::Scene, public BookListener {
 	uint8_t m_lampMesh[BOOK_MAX_LINES] = {0};
 	GameObject* m_stack[BOOK_COUNT] = {nullptr};
 	GameObject* m_done[BOOK_COUNT] = {nullptr};
-	GameObject* m_autodial = nullptr;
+	GameObject* m_autobox = nullptr;
 	GameObject* m_lampAuto = nullptr;
 	uint8_t m_lampAutoMesh = 0;
 
-	psyqo::Fragments::SimpleFragment<psyqo::Prim::Rectangle> m_bands[2][6];
+	psyqo::Fragments::SimpleFragment<psyqo::Prim::Rectangle> m_bands[2][8];
 	uint8_t m_bandCount = 0;
 	KeyGlyphs m_glyphs;
 
@@ -97,7 +106,10 @@ class BookScene final : public psyqo::Scene, public BookListener {
 	uint8_t m_panelBook = 0;
 	bool m_shop = false;
 	uint8_t m_shopSel = 0;
+	uint8_t m_shopItems[SHOP_MAX] = {0}; // < SHOP_ENTRIES: a fixed item, else SHOP_ENTRIES + book
 	bool m_menu = false;
+	uint8_t m_promo = 0; // 1 the offer, 2 the perks (the promotion has happened)
+	uint8_t m_promoSel = 0;
 
 	uint16_t m_toastTimer = 0;
 	char m_toast[40] = {0};
@@ -116,5 +128,5 @@ class BookScene final : public psyqo::Scene, public BookListener {
 	uint32_t m_lastFrame = 0;
 	uint32_t m_frameAcc = 0;
 	bool m_savePending = false; // saves wait for a natural pause, never an idle timer
-	uint32_t m_lastSaveAt = 0;  // play seconds when the last write started
+	uint32_t m_lastSaveAt = 0;	// play seconds when the last write started
 };

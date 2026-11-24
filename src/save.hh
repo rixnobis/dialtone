@@ -17,6 +17,12 @@ class SaveSlot {
 
 	// blocking; on Loaded the payload and the play time are filled in
 	Status Load(void* payload, uint16_t size, uint32_t& playSeconds);
+	// the same for a save that has had more than one layout: `which` is the format the file is in, and
+	// the payload must have room for the biggest
+	struct Format {
+		uint16_t version, size;
+	};
+	Status Load(const Format* formats, uint8_t count, void* payload, uint32_t& playSeconds, uint8_t& which);
 	// non-blocking; does nothing while a write is still running
 	void Save(const void* payload, uint16_t size, uint32_t playSeconds);
 

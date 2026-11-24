@@ -286,6 +286,20 @@ def build():
     new_object("LINEBOARD", bm)
     layout["LINE_LAMPS"] = [(0.8 + (i % 5) * 0.19, 0.75 + (i // 5) * 0.3, 0.3) for i in range(10)]
 
+    # phone books mode: the autodialer is its own box, like an alarm clock, with a dark window the
+    # game draws an LED readout over; its front is tiles around the window so the window sorts in front
+    bm, col = start("AUTOBOX")
+    BX0, BX1, BY, BZ = -0.45, 0.5, 1.0, 0.5
+    WINDOW = (BX0 + 0.1, 0.12, BX1 - 0.1, 0.42)
+    BEIGE, BEIGE_SIDE = (0.8, 0.76, 0.62), (0.7, 0.66, 0.52)
+    add_box(bm, col, (BX0, BY, 0.0), (BX1, BY + 0.4, BZ), BEIGE, BEIGE_SIDE, skip=("front", "top", "bottom", "back"))
+    add_front(bm, col, BX0, BX1, BY, 0.0, BZ, 0.2, BEIGE_SIDE, holes=[WINDOW])
+    add_grid(bm, col, (BX0, BY), (BX1, BY + 0.4), BZ, 0.2, BEIGE)
+    add_box(bm, col, (WINDOW[0], BY - 0.02, WINDOW[1]), (WINDOW[2], BY, WINDOW[3]), (0.08, 0.03, 0.03), (0.09, 0.03, 0.03), skip=("top", "bottom", "back"))
+    new_object("AUTOBOX", bm)
+    layout["AUTOBOX_LED"] = ((WINDOW[0] + WINDOW[2]) / 2, BY - 0.02, (WINDOW[1] + WINDOW[3]) / 2)
+    layout["AUTOBOX_LAMP"] = (BX1 - 0.15, BY + 0.2, BZ)
+
     # one phone book, yellow pages; the game stacks as many as are left to dial, and a grey one per
     # finished book on the done pile behind
     for name, cover in (("BOOK", (0.95, 0.78, 0.12)), ("BOOKDONE", (0.5, 0.48, 0.4))):
@@ -373,7 +387,7 @@ def write_layout():
     lines.append("constexpr psyqo::Vec3 LINE_LAMPS[10] = {")
     lines += ["\t%s," % vec(k) for k in layout["LINE_LAMPS"]]
     lines.append("};")
-    for key in ("BOOK_STACK", "BOOK_DONE"):
+    for key in ("BOOK_STACK", "BOOK_DONE", "AUTOBOX_LED", "AUTOBOX_LAMP"):
         lines.append("constexpr psyqo::Vec3 %s = %s;" % (key, vec(layout[key])))
     lines.append("constexpr psyqo::FixedPoint<> BOOK_HEIGHT = %s;" % fp(layout["BOOK_HEIGHT"]))
     lines += ["", "} // namespace desk", ""]

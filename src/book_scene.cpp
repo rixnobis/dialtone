@@ -22,6 +22,9 @@ static constexpr psyqo::Color c_red = {.r = 255, .g = 96, .b = 80};
 static constexpr psyqo::Color c_yellow = {.r = 255, .g = 240, .b = 90};
 static constexpr psyqo::Color c_band = {.r = 0, .g = 0, .b = 0};
 static constexpr psyqo::Color c_ink = {.r = 40, .g = 20, .b = 12};
+static constexpr psyqo::Color c_ledBack = {.r = 24, .g = 6, .b = 6};
+static constexpr psyqo::Color c_led = {.r = 255, .g = 48, .b = 32};
+static constexpr psyqo::Color c_ledDim = {.r = 150, .g = 30, .b = 20};
 
 static constexpr char c_keys[4][3] = {{'1', '2', '3'}, {'4', '5', '6'}, {'7', '8', '9'}, {'*', '0', '#'}};
 static constexpr const char* c_keyMeshes[] = {"MODELS/KEY.MB", "MODELS/KEYSEL.MB", "MODELS/KEYLIT.MB"};
@@ -56,6 +59,8 @@ static constexpr int16_t c_rowY[ROW_PANEL] = {12, 28, 44, 208, 192, 98, 114};
 static constexpr int16_t PANEL_X = 168, PANEL_Y = 64;
 static constexpr int16_t TOP_BAND_H = 64, BANNER_Y = 92, BANNER_H = 42;
 static constexpr int16_t SHOP_FIRST_Y = 60;
+// the autodialer's readout: 8 characters of 6 pixels, two rows
+static constexpr int16_t LED_W = 8 * KeyGlyphs::GLYPH_W + 6, LED_H = 2 * KeyGlyphs::GLYPH_H + 6;
 // opening the office saves only if the last save is at least this old
 static constexpr uint16_t OFFICE_SAVE_SECONDS = 30;
 static constexpr uint16_t NOTE_LINE_TICKS = 170;
@@ -66,12 +71,12 @@ static constexpr const char* c_intro[OVER_ROWS] = {
 	"They hired you to make calls. You",
 	"don't remember applying. Call every",
 	"number in the phone book: the corp",
-	"pays a little per call, more if they",
-	"listen. Finish a book, get the next.",
+	"pays a little per call, more for a",
+	"sale. SELECT buys lines, books, gear.",
 	"",
 	"D-pad + X  dial     O  undo a digit",
 	"TRIANGLE  the book  SQUARE  list it",
-	"L2 hang up  R2 answer  SELECT shop",
+	"L2 hang up  R2 answer/next number",
 	"START  the office, and this card",
 	"         press X to start",
 };
@@ -179,13 +184,18 @@ void BookScene::start(StartReason reason) {
 	}
 #endif
 #ifdef DIALTONE_PREDIAL
-	// test builds: every number but the last DIALTONE_PREDIAL of the last book already called
+	// test builds: every residential book yours, every number but the last DIALTONE_PREDIAL called
 	if (status != SaveSlot::Status::Loaded) {
 		m_sim.DebugPredial(DIALTONE_PREDIAL);
 	}
 #endif
 	m_shownCash = m_sim.Cash();
-	m_panelBook = m_sim.OpenBook();
+	m_panelBook = m_sim.FirstOwned();
+	if (m_sim.Category() == 0 && (m_sim.NoteState() == 1 || m_sim.NoteState() == 2)) {
+		// the note is still waiting to be called: the book opens on it
+		m_panelBook = RESIDENTIAL_BOOKS - 1;
+		m_panelSel = BookSim::c_books[m_panelBook].entries;
+	}
 	m_lastFrame = g_madnightEngine.gpu().getFrameCount();
 	m_lastSaveAt = m_playSeconds;
 	printf("DIALTONE: books ready\n");
@@ -231,20 +241,28 @@ void BookScene::UpdateDesk(void) {
 	// a lamp per line you own, lit while it is on a call; the corp line flashes them all
 	bool flash = m_sim.SupervisorRinging() && (m_flashTimer & 8);
 	for (uint8_t i = 0; i < BOOK_MAX_LINES; i++) {
-		if (i < m_sim.Lines() && !m_lamps[i]) {
+		bool owned = i < m_sim.Lines();
+		if (owned && !m_lamps[i]) {
 			eastl::fixed_string<char, 8> name;
 			name.sprintf("lamp%u", i);
 			m_lamps[i] = Place(name.c_str(), c_lampMeshes[0], desk::LINE_LAMPS[i]);
 			m_lampMesh[i] = 0;
+		} else if (!owned) {
+			Remove(m_lamps[i]); // a promotion takes the lines away
 		}
-		bool lit = i < m_sim.Lines() && (m_sim.GetLine(i).state != BookLineState::Idle || flash);
+		bool lit = owned && (m_sim.GetLine(i).state != BookLineState::Idle || flash);
 		SetMeshIfChanged(m_lamps[i], m_lampMesh[i], lit ? 1 : 0, c_lampMeshes);
 	}
 
-	// books left to call on the stack, finished ones on the pile behind it
-	uint8_t done = m_sim.BooksDone();
+	// your books still to finish on the stack, finished ones on the pile behind it
+	uint8_t left = 0, done = 0;
+	for (uint8_t b = 0; b < BOOK_COUNT; b++) {
+		if (m_sim.Owned(b)) {
+			(m_sim.BookDone(b) ? done : left)++;
+		}
+	}
 	for (uint8_t i = 0; i < BOOK_COUNT; i++) {
-		bool stack = i < BOOK_COUNT - done, pile = i < done;
+		bool stack = i < left, pile = i < done;
 		if (stack && !m_stack[i]) {
 			psyqo::Vec3 pos = desk::BOOK_STACK;
 			pos.y -= desk::BOOK_HEIGHT * int32_t(i);
@@ -261,9 +279,14 @@ void BookScene::UpdateDesk(void) {
 		}
 	}
 
-	if (m_sim.HasAutodialer() && !m_autodial) {
-		m_autodial = Place("autodial", "MODELS/AUTODIAL.MB", {0, 0, 0});
-		m_lampAuto = Place("lamp_auto", c_lampMeshes[0], desk::LAMP_AUTO);
+	// the autodialer: its own box with a readout, and a lamp on top while it has a call going
+	if (m_sim.HasAutodialer() && !m_autobox) {
+		m_autobox = Place("autobox", "MODELS/AUTOBOX.MB", {0, 0, 0});
+		m_lampAuto = Place("lamp_auto", c_lampMeshes[0], desk::AUTOBOX_LAMP);
+		m_lampAutoMesh = 0;
+	} else if (!m_sim.HasAutodialer()) {
+		Remove(m_autobox);
+		Remove(m_lampAuto);
 	}
 	SetMeshIfChanged(m_lampAuto, m_lampAutoMesh, m_sim.AutodialerWorking() && (m_flashTimer & 4) ? 1 : 0,
 					 c_lampMeshes);
@@ -271,7 +294,23 @@ void BookScene::UpdateDesk(void) {
 
 uint8_t BookScene::PanelCount(void) const {
 	uint8_t n = BookSim::c_books[m_panelBook].entries;
-	return m_panelBook == BOOK_COUNT - 1 && m_sim.NoteState() >= 1 ? n + 1 : n;
+	return m_panelBook == RESIDENTIAL_BOOKS - 1 && m_sim.Category() == 0 && m_sim.NoteState() >= 1 ? n + 1 : n;
+}
+
+uint8_t BookScene::ShopCount(void) {
+	uint8_t n = 0;
+	for (uint8_t i = 0; i < BookSim::SHOP_ENTRIES; i++) {
+		m_shopItems[n++] = i;
+	}
+	uint8_t books[BOOK_COUNT];
+	uint8_t count = m_sim.ForSaleList(books);
+	for (uint8_t i = 0; i < count; i++) {
+		m_shopItems[n++] = BookSim::SHOP_ENTRIES + books[i];
+	}
+	if (m_shopSel >= n) {
+		m_shopSel = n - 1;
+	}
+	return n;
 }
 
 void BookScene::Toast(uint16_t ticks, const char* fmt, ...) {
@@ -310,25 +349,41 @@ void BookScene::ClearPanel(void) {
 
 void BookScene::HandleShopButton(psyqo::AdvancedPad::Button button) {
 	using Button = psyqo::AdvancedPad::Button;
+	uint8_t count = ShopCount();
 	switch (button) {
 		case Button::Up:
-			m_shopSel = (m_shopSel + BookSim::SHOP_ENTRIES - 1) % BookSim::SHOP_ENTRIES;
+			m_shopSel = (m_shopSel + count - 1) % count;
 			break;
 		case Button::Down:
-			m_shopSel = (m_shopSel + 1) % BookSim::SHOP_ENTRIES;
+			m_shopSel = (m_shopSel + 1) % count;
 			break;
 		case Button::Cross:
 		case Button::Square: {
-			uint8_t lines = m_sim.Lines();
-			bool hadAuto = m_sim.HasAutodialer();
-			if (!m_sim.Buy(m_shopSel)) {
+			uint8_t item = m_shopItems[m_shopSel];
+			if (item >= BookSim::SHOP_ENTRIES) {
+				uint8_t book = item - BookSim::SHOP_ENTRIES;
+				if (m_sim.BuyBook(book)) {
+					Toast(180, "%s is yours: TRIANGLE", BookSim::c_books[book].name);
+					// a new book goes straight to the panel when the one there is finished
+					if (m_sim.BookDone(m_panelBook)) {
+						m_panelBook = book;
+						m_panelSel = 0;
+					}
+				}
 				break;
 			}
-			if (m_shopSel == 0) {
+			uint8_t lines = m_sim.Lines();
+			bool hadAuto = m_sim.HasAutodialer();
+			if (!m_sim.Buy(item)) {
+				break;
+			}
+			if (item == 0) {
 				Toast(180, "Line %d installed", lines + 1);
-			} else if (m_shopSel == 1 && !hadAuto) {
+			} else if (item == 1 && !hadAuto) {
 				Toast(180, "Autodialer! TRIANGLE, SQUARE: list");
-			} else if (m_shopSel == 1) {
+			} else if (item == 1) {
+				Toast(180, "Autodialer runs %d at once now", m_sim.AutoLines());
+			} else if (item == 2) {
 				Toast(180, "Autodialer motor %d: faster", m_sim.Motor());
 			} else {
 				Toast(180, "Tray holds %d numbers now", m_sim.QueueCapacity());
@@ -343,6 +398,123 @@ void BookScene::HandleShopButton(psyqo::AdvancedPad::Button button) {
 		default:
 			break;
 	}
+}
+
+void BookScene::HandleMenuButton(psyqo::AdvancedPad::Button button) {
+	using Button = psyqo::AdvancedPad::Button;
+	if (button == Button::Start || button == Button::Circle) {
+		m_menu = false;
+		ClearOverlay();
+	} else if (button == Button::Cross && m_sim.PromotionReady()) {
+		m_menu = false;
+		m_promo = 1;
+		ClearOverlay();
+	} else if (button == Button::Cross || button == Button::Square) {
+		m_menu = false;
+		m_intro = true;
+		ClearOverlay();
+	}
+}
+
+void BookScene::AfterPromotion(void) {
+	// a new desk: the lines, the autodialer and the books are gone, whatever was ringing stops
+	m_tones.Line(0, Tones::Cue::None);
+	m_tones.Line(1, Tones::Cue::None);
+	m_toneStop[0] = m_toneStop[1] = 0;
+	m_panelBook = m_sim.FirstOwned();
+	m_panelSel = 0;
+	m_panel = m_shop = false;
+	m_shopSel = 0;
+	m_shownCash = m_sim.Cash();
+	m_bannerTimer = 0;
+	ClearPanel();
+}
+
+void BookScene::HandlePromoButton(psyqo::AdvancedPad::Button button) {
+	using Button = psyqo::AdvancedPad::Button;
+	if (m_promo == 1) {
+		if (button == Button::Cross) {
+			m_sim.Promote();
+			AfterPromotion();
+			m_promo = 2;
+			m_promoSel = 0;
+			RequestSave(); // paused here: a safe moment for the card
+			ClearOverlay();
+		} else if (button == Button::Circle || button == Button::Start) {
+			m_promo = 0;
+			m_menu = true;
+			ClearOverlay();
+		}
+		return;
+	}
+	switch (button) {
+		case Button::Up:
+			m_promoSel = (m_promoSel + PERK_COUNT) % (PERK_COUNT + 1);
+			break;
+		case Button::Down:
+			m_promoSel = (m_promoSel + 1) % (PERK_COUNT + 1);
+			break;
+		case Button::Cross:
+		case Button::Square:
+			if (m_promoSel < PERK_COUNT) {
+				m_sim.BuyPerk(m_promoSel);
+			} else if (button == Button::Cross) {
+				m_promo = 0;
+				ClearOverlay();
+				RequestSave();
+				Toast(300, "%s is yours. Start dialing.", BookSim::c_books[m_panelBook].name);
+				printf("DIALTONE: started in %s\n", BookSim::c_categories[m_sim.Category()]);
+			}
+			break;
+		case Button::Start:
+			m_promoSel = PERK_COUNT;
+			break;
+		default:
+			break;
+	}
+}
+
+void BookScene::MovePanel(int8_t step) {
+	// past either end of a book, the panel turns to your next (or previous) book
+	uint8_t n = PanelCount();
+	int16_t sel = int16_t(m_panelSel) + step;
+	if (sel >= 0 && sel < n) {
+		m_panelSel = sel;
+		return;
+	}
+	uint8_t next = m_sim.NextOwned(m_panelBook, step);
+	if (next == m_panelBook) {
+		m_panelSel = sel < 0 ? n - 1 : 0;
+		return;
+	}
+	m_panelBook = next;
+	m_panelSel = sel < 0 ? PanelCount() - 1 : 0;
+	ClearPanel();
+}
+
+void BookScene::JumpToUncalled(void) {
+	uint8_t book = m_panelBook, entry = m_panelSel;
+	if (entry >= BookSim::c_books[book].entries) {
+		entry = 0;
+	}
+	// with the book shut, the number under the cursor counts too: R2 then opens the book right there
+	// if nobody has called it yet; with the book open it moves on
+	bool here = !m_panel && m_sim.EntryStatus(book, entry) == Entry::Unknown && !m_sim.IsQueued(book, entry);
+	if (here) {
+		m_panel = true;
+		return;
+	}
+	if (!m_sim.NextUncalled(book, entry)) {
+		Toast(180, m_sim.ForSaleList(m_shopItems) ? "Every number called: SELECT, a book"
+												  : "Every number called");
+		return;
+	}
+	if (book != m_panelBook) {
+		ClearPanel();
+	}
+	m_panelBook = book;
+	m_panelSel = entry;
+	m_panel = true;
 }
 
 void BookScene::HandleButton(psyqo::AdvancedPad::Button button) {
@@ -361,20 +533,17 @@ void BookScene::HandleButton(psyqo::AdvancedPad::Button button) {
 			m_sim.NoteSceneOver();
 			ClearOverlay();
 			RequestSave();
-			Toast(300, "Keep dialing. They are watching.");
+			Toast(300, "The office (START): a promotion.");
 			printf("DIALTONE: to be continued dismissed\n");
 		}
 		return;
 	}
+	if (m_promo) {
+		HandlePromoButton(button);
+		return;
+	}
 	if (m_menu) {
-		if (button == Button::Start || button == Button::Circle) {
-			m_menu = false;
-			ClearOverlay();
-		} else if (button == Button::Cross) {
-			m_menu = false;
-			m_intro = true;
-			ClearOverlay();
-		}
+		HandleMenuButton(button);
 		return;
 	}
 	if (m_shop) {
@@ -404,9 +573,12 @@ void BookScene::HandleButton(psyqo::AdvancedPad::Button button) {
 			m_sim.HangUp();
 			break;
 		case Button::R2:
+			// the corp first; otherwise the book opens at the next number nobody has called
 			if (m_sim.AnswerSupervisor()) {
 				m_tones.Line(1, Tones::Cue::None);
 				RequestSave();
+			} else {
+				JumpToUncalled();
 			}
 			break;
 		case Button::Triangle:
@@ -416,8 +588,7 @@ void BookScene::HandleButton(psyqo::AdvancedPad::Button button) {
 		case Button::L1:
 		case Button::R1:
 			if (m_panel) {
-				uint8_t n = PanelCount();
-				m_panelSel = (m_panelSel + (button == Button::L1 ? n - 1 : 1)) % n;
+				MovePanel(button == Button::L1 ? -1 : 1);
 			}
 			break;
 		case Button::Square:
@@ -426,6 +597,8 @@ void BookScene::HandleButton(psyqo::AdvancedPad::Button button) {
 					Toast(180, "It can't read handwriting.");
 				} else if (!m_sim.HasAutodialer()) {
 					Toast(180, "No autodialer yet: SELECT, shop");
+				} else if (m_sim.BookDone(m_panelBook)) {
+					Toast(180, "That book is finished.");
 				} else {
 					bool was = m_sim.IsQueued(m_panelBook, m_panelSel);
 					if (!m_sim.ToggleQueued(m_panelBook, m_panelSel)) {
@@ -460,21 +633,34 @@ void BookScene::HandleButton(psyqo::AdvancedPad::Button button) {
 	}
 }
 
-uint8_t BookScene::ToneSlot(uint8_t line) const { return m_sim.GetLine(line).byMachine ? 1 : 0; }
+// the tones follow your own line and one of the autodialer's calls, the one on its readout; the other
+// calls it has going are only lamps
+bool BookScene::Audible(uint8_t line) const {
+	return !m_sim.GetLine(line).byMachine || int8_t(line) == m_sim.AutoShownLine();
+}
 
 void BookScene::OnDigit(uint8_t line, char digit) {
-	uint8_t slot = ToneSlot(line);
+	if (!Audible(line)) {
+		return;
+	}
+	uint8_t slot = m_sim.GetLine(line).byMachine ? 1 : 0;
 	if (m_toneStop[slot]) {
 		m_tones.Line(slot, Tones::Cue::None);
 		m_toneStop[slot] = 0;
 	}
 	m_tones.Digit(digit);
-	m_lastKey = digit;
-	m_keyFlash = 6;
+	// the keypad lights for your own presses only; the autodialer has its readout
+	if (slot == 0) {
+		m_lastKey = digit;
+		m_keyFlash = 6;
+	}
 }
 
 void BookScene::OnRing(uint8_t line) {
-	uint8_t slot = ToneSlot(line);
+	if (!Audible(line)) {
+		return;
+	}
+	uint8_t slot = m_sim.GetLine(line).byMachine ? 1 : 0;
 	if (slot == 1 && m_sim.SupervisorRinging()) {
 		return;
 	}
@@ -483,7 +669,10 @@ void BookScene::OnRing(uint8_t line) {
 }
 
 void BookScene::OnDead(uint8_t line) {
-	uint8_t slot = ToneSlot(line);
+	if (!Audible(line)) {
+		return;
+	}
+	uint8_t slot = m_sim.GetLine(line).byMachine ? 1 : 0;
 	if (slot == 1 && m_sim.SupervisorRinging()) {
 		return;
 	}
@@ -492,7 +681,10 @@ void BookScene::OnDead(uint8_t line) {
 }
 
 void BookScene::OnHangUp(uint8_t line) {
-	uint8_t slot = ToneSlot(line);
+	if (!Audible(line)) {
+		return;
+	}
+	uint8_t slot = m_sim.GetLine(line).byMachine ? 1 : 0;
 	if (slot == 1 && m_sim.SupervisorRinging()) {
 		return;
 	}
@@ -509,7 +701,7 @@ void BookScene::OnSold(uint8_t line) {
 	OnHangUp(line);
 	const auto& l = m_sim.GetLine(line);
 	char top[40], bottom[40];
-	snprintf(bottom, sizeof(bottom), "        they listened: +$%d", l.paid);
+	snprintf(bottom, sizeof(bottom), "        they bought it: +$%d", l.paid);
 	if (l.byMachine) {
 		Toast(180, "Autodialer sold one: +$%d", l.paid);
 	} else {
@@ -532,10 +724,22 @@ void BookScene::OnSupervisorRing(bool ringing) {
 void BookScene::OnBookDone(uint8_t book) {
 	char top[40], bottom[40];
 	snprintf(top, sizeof(top), "   %s: every number called", BookSim::c_books[book].name);
-	if (book + 1 < BOOK_COUNT) {
-		snprintf(bottom, sizeof(bottom), "   Next book: %s", BookSim::c_books[book + 1].name);
-	} else {
+	// the panel moves on to a book of yours still to finish, if there is one
+	uint8_t next = m_sim.FirstOwned();
+	uint8_t forSale = m_sim.ForSaleList(m_shopItems);
+	if (!m_sim.BookDone(next)) {
+		snprintf(bottom, sizeof(bottom), "   Next: %s", BookSim::c_books[next].name);
+		if (book == m_panelBook) {
+			m_panelBook = next;
+			m_panelSel = 0;
+			ClearPanel();
+		}
+	} else if (forSale) {
+		snprintf(bottom, sizeof(bottom), "   Buy the next book: SELECT");
+	} else if (m_sim.Category() == 0) {
 		snprintf(bottom, sizeof(bottom), "   That was the last residential book");
+	} else {
+		snprintf(bottom, sizeof(bottom), "   Promotion: START, the office");
 	}
 	Banner(240, c_green, top, bottom);
 	m_tones.Win();
@@ -549,7 +753,7 @@ void BookScene::OnNote(void) {
 	snprintf(top, sizeof(top), " A sticky note in the book: %s", text);
 	Banner(600, c_yellow, top, " \"Saw your numbers. I want out too.\"");
 	// the book opens on the note once you look in it
-	m_panelBook = BOOK_COUNT - 1;
+	m_panelBook = RESIDENTIAL_BOOKS - 1;
 	m_panelSel = BookSim::c_books[m_panelBook].entries;
 	m_panel = false;
 	ClearPanel();
@@ -575,13 +779,17 @@ void BookScene::SetRow(uint8_t row, psyqo::Color colour, const char* fmt, ...) {
 	m_rows[row]->SetColour(colour);
 }
 
-void BookScene::DrawBand(int16_t x, int16_t y, int16_t w, int16_t h, psyqo::Color colour) {
+void BookScene::DrawBand(int16_t x, int16_t y, int16_t w, int16_t h, psyqo::Color colour, bool semiTrans) {
 	auto& gpu = g_madnightEngine.gpu();
 	auto& fragment = m_bands[gpu.getParity()][m_bandCount++];
 	fragment.primitive.position = {{.x = x, .y = y}};
 	fragment.primitive.size = {{.x = w, .y = h}};
 	fragment.primitive.setColor(colour);
-	fragment.primitive.setSemiTrans();
+	if (semiTrans) {
+		fragment.primitive.setSemiTrans();
+	} else {
+		fragment.primitive.setOpaque();
+	}
 	gpu.chain(fragment);
 }
 
@@ -592,13 +800,14 @@ void BookScene::UpdateHandRow(void) {
 	char number[12];
 	bool blank = line.state == BookLineState::Idle && (line.outcome == CallOutcome::None);
 	FormatNumber(number, line.digits, blank ? 0 : (line.byMachine ? BOOK_NUMBER_LENGTH : line.digitCount));
-	if (m_sim.HandLine() < 0 && line.byMachine) {
-		// the hand row is yours: what the machine did on that line is not
+	bool machine = m_sim.HandLine() < 0 && line.byMachine;
+	if (machine) {
+		// the hand row is yours: what the machine does or did on that line is not
 		FormatNumber(number, line.digits, 0);
 		blank = true;
 	}
 
-	switch (line.state) {
+	switch (machine ? BookLineState::Idle : line.state) {
 		case BookLineState::Dialing:
 			SetRow(ROW_HAND, c_white, "%s  %s", number, line.digitCount == BOOK_NUMBER_LENGTH ? "connecting" : "");
 			return;
@@ -610,7 +819,8 @@ void BookScene::UpdateHandRow(void) {
 			}
 			return;
 		case BookLineState::Talking:
-			if (line.pending == CallOutcome::Sold) {
+			// a sale and a waste of time sound the same until the end
+			if (line.pending == CallOutcome::Sold || line.pending == CallOutcome::NoSale) {
 				SetRow(ROW_HAND, c_green, "%s  they're listening...", number);
 			} else {
 				SetRow(ROW_HAND, c_red, "%s  \"Not interested.\" *click*", number);
@@ -636,6 +846,9 @@ void BookScene::UpdateHandRow(void) {
 			break;
 		case CallOutcome::HungUp:
 			SetRow(ROW_HAND, c_grey, "%s  hung up  +$%d", number, line.paid);
+			break;
+		case CallOutcome::NoSale:
+			SetRow(ROW_HAND, c_grey, "%s  \"No thanks.\"  +$%d", number, line.paid);
 			break;
 		case CallOutcome::Sold:
 			SetRow(ROW_HAND, c_amber, "%s  SALE  +$%d", number, line.paid);
@@ -681,32 +894,43 @@ void BookScene::UpdatePanel(void) {
 		m_sim.EntryNumber(m_panelBook, i, digits);
 		FormatNumber(number, digits, BOOK_NUMBER_LENGTH);
 		char queued = m_sim.IsQueued(m_panelBook, i) ? '*' : ' ';
-		static constexpr const char* words[] = {"", "dud", "n/a", "hung", "SALE"};
-		static constexpr psyqo::Color colours[] = {c_white, c_red, c_grey, c_grey, c_green};
+		static constexpr const char* words[] = {"", "dud", "n/a", "hung", "SALE", "no sale"};
+		static constexpr psyqo::Color colours[] = {c_white, c_red, c_grey, c_grey, c_green, c_grey};
 		Entry status = m_sim.EntryStatus(m_panelBook, i);
 		SetRow(row, i == m_panelSel ? c_amber : colours[uint8_t(status)], "%c%s%c %s", cursor, number, queued,
 			   words[uint8_t(status)]);
 	}
 	uint8_t pages = (count + PANEL_ENTRIES - 1) / PANEL_ENTRIES;
+	uint8_t help = ROW_PANEL + PANEL_ROWS - 1;
 	if (m_panelSel >= book.entries) {
-		SetRow(ROW_PANEL + PANEL_ROWS - 1, c_yellow, "\"I want out too.\"");
-	} else if (m_sim.HasAutodialer()) {
-		// the key reminder takes turns with the clear-list one, the panel is 19 columns wide
-		if ((m_flashTimer / 120) % 2) {
-			SetRow(ROW_PANEL + PANEL_ROWS - 1, c_grey, "hold SQ: clear list");
-		} else {
-			SetRow(ROW_PANEL + PANEL_ROWS - 1, c_grey, "L1/R1 %d/%d  SQ list", first / PANEL_ENTRIES + 1, pages);
-		}
+		SetRow(help, c_yellow, "\"I want out too.\"");
+		return;
+	}
+	// the panel is 19 columns: the key reminders take turns
+	uint8_t turn = (m_flashTimer / 120) % (m_sim.HasAutodialer() ? 3 : 2);
+	if (turn == 0) {
+		SetRow(help, c_grey, "L1/R1 pg %d/%d R2 new", first / PANEL_ENTRIES + 1, pages);
+	} else if (turn == 1) {
+		SetRow(help, c_grey, "R2: next uncalled");
 	} else {
-		SetRow(ROW_PANEL + PANEL_ROWS - 1, c_grey, "L1/R1 move  pg %d/%d", first / PANEL_ENTRIES + 1, pages);
+		SetRow(help, c_grey, "SQ list, hold:clear");
 	}
 }
 
 void BookScene::UpdateShop(void) {
+	uint8_t count = ShopCount();
 	uint8_t r = ROW_OVER + (SHOP_FIRST_Y - 12) / 16;
 	SetRow(r++, c_amber, "SUPPLIES  $%-10d SELECT close", m_sim.Cash());
-	for (uint8_t i = 0; i < BookSim::SHOP_ENTRIES; i++) {
-		char cursor = m_shopSel == i ? '>' : ' ';
+	for (uint8_t s = 0; s < count; s++) {
+		char cursor = m_shopSel == s ? '>' : ' ';
+		uint8_t i = m_shopItems[s];
+		if (i >= BookSim::SHOP_ENTRIES) {
+			const auto& book = BookSim::c_books[i - BookSim::SHOP_ENTRIES];
+			bool afford = m_sim.Cash() >= book.price;
+			SetRow(r++, afford ? (m_shopSel == s ? c_amber : c_yellow) : c_grey, "%cBook: %-11s $%d", cursor,
+				   book.name, book.price);
+			continue;
+		}
 		uint32_t price = m_sim.ShopPrice(i);
 		char name[24];
 		switch (i) {
@@ -717,57 +941,110 @@ void BookScene::UpdateShop(void) {
 				if (!m_sim.HasAutodialer()) {
 					snprintf(name, sizeof(name), "Autodialer");
 				} else {
-					snprintf(name, sizeof(name), "Faster motor %d", m_sim.Motor() + (price ? 1 : 0));
+					snprintf(name, sizeof(name), "Autodialer lv %d", m_sim.AutoLevel() + (price ? 1 : 0));
 				}
+				break;
+			case 2:
+				snprintf(name, sizeof(name), "Faster motor %d", m_sim.Motor() + (price ? 1 : 0));
 				break;
 			default:
 				snprintf(name, sizeof(name), "Bigger tray %d", m_sim.Tray() + (price ? 1 : 0));
 				break;
 		}
-		if (i == 2 && !m_sim.HasAutodialer()) {
+		if (i >= 2 && !m_sim.HasAutodialer()) {
 			SetRow(r++, c_grey, "%c%-17s needs autodialer", cursor, name);
 		} else if (price == 0) {
 			SetRow(r++, c_grey, "%c%-17s all bought", cursor, name);
+		} else if (m_sim.ShopLocked(i)) {
+			SetRow(r++, c_grey, "%c%-17s after promotion", cursor, name);
 		} else {
 			bool afford = m_sim.Cash() >= price;
-			SetRow(r++, afford ? (m_shopSel == i ? c_amber : c_white) : c_grey, "%c%-17s $%d", cursor, name, price);
+			SetRow(r++, afford ? (m_shopSel == s ? c_amber : c_white) : c_grey, "%c%-17s $%d", cursor, name, price);
 		}
 	}
 	// what the selected thing does
-	switch (m_shopSel) {
+	uint8_t i = m_shopItems[m_shopSel];
+	if (i >= BookSim::SHOP_ENTRIES) {
+		uint8_t b = i - BookSim::SHOP_ENTRIES;
+		const auto& book = BookSim::c_books[b];
+		SetRow(r++, c_green, "%d nos %d%% dud %d%% pick-up $%d+%d", book.entries, book.dudPercent,
+			   m_sim.PickupPercent(b), book.fee, book.bonus);
+		for (; r < ROW_OVER + OVER_ROWS; r++) {
+			SetRow(r, c_white, "");
+		}
+		return;
+	}
+	switch (i) {
 		case 0:
-			SetRow(r++, c_green, "%d line%s now. One more to dial on", m_sim.Lines(), m_sim.Lines() > 1 ? "s" : "");
+			SetRow(r++, c_green, "%d line%s now. One stays yours", m_sim.Lines(), m_sim.Lines() > 1 ? "s" : "");
 			break;
 		case 1:
 			if (!m_sim.HasAutodialer()) {
 				SetRow(r++, c_green, "Dials a list you give it. Badly.");
+			} else if (m_sim.AutoLines() < m_sim.AutoLevel()) {
+				SetRow(r++, c_green, "Lv %d runs %d at once: needs lines", m_sim.AutoLevel(), m_sim.AutoLines());
 			} else {
-				SetRow(r++, c_green, "Digit every %d ticks, rests %ds", m_sim.AutodialDigitTicks(),
-					   m_sim.AutodialPauseTicks() / 60);
+				SetRow(r++, c_green, "Runs %d call%s at once, a line each", m_sim.AutoLines(),
+					   m_sim.AutoLines() > 1 ? "s" : "");
 			}
+			break;
+		case 2:
+			SetRow(r++, c_green, "Digit every %d ticks, rests %ds", m_sim.AutodialDigitTicks(),
+				   m_sim.AutodialPauseTicks() / 60);
 			break;
 		default:
 			SetRow(r++, c_green, "Its list holds %d numbers", m_sim.QueueCapacity());
 			break;
 	}
-	SetRow(r++, c_grey, "Up to 10 lines. Promotions: later.");
+	for (; r < ROW_OVER + OVER_ROWS; r++) {
+		SetRow(r, c_white, "");
+	}
 }
 
 void BookScene::UpdateMenu(void) {
 	uint8_t r = ROW_OVER;
+	uint8_t category = m_sim.Category();
 	SetRow(r++, c_amber, "          THE OFFICE");
 	SetRow(r++, c_white, "Calls %-5d sales %-4d duds %d", m_sim.Calls(), m_sim.Connects(), m_sim.DudCalls());
 	SetRow(r++, c_white, "Earned $%-7d played %dh%02dm", m_sim.Earned(), m_playSeconds / 3600, m_playSeconds / 60 % 60);
-	SetRow(r++, c_green, "RESIDENTIAL         %d/%d books", m_sim.BooksDone(), BOOK_COUNT);
-	for (uint8_t b = 0; b < BOOK_COUNT; b++) {
+	SetRow(r++, c_green, "%-19s %d/%d books", BookSim::c_categories[category], m_sim.BooksDoneIn(category),
+		   m_sim.BooksIn(category));
+	// the category's books: yours, for sale, or locked until enough of the others are done
+	uint8_t shown = 0;
+	for (uint8_t b = 0; b < BOOK_COUNT && shown < 4; b++) {
 		const auto& book = BookSim::c_books[b];
-		bool open = b <= m_sim.OpenBook();
-		SetRow(r++, open ? c_white : c_grey, "  %-15s %s%2d/%d", book.name, m_sim.BookDone(b) ? "done " : "     ",
-			   open ? m_sim.BookDialed(b) : 0, book.entries);
+		if (book.category != category) {
+			continue;
+		}
+		shown++;
+		if (m_sim.Owned(b)) {
+			SetRow(r++, c_white, "  %-15s %s%2d/%d", book.name, m_sim.BookDone(b) ? "done " : "     ",
+				   m_sim.BookDialed(b), book.entries);
+		} else if (m_sim.ForSale(b)) {
+			SetRow(r++, c_yellow, "  %-15s for sale $%d", book.name, book.price);
+		} else {
+			SetRow(r++, c_grey, "  %-15s after %d done", book.name, book.unlockAfter);
+		}
 	}
-	SetRow(r++, c_grey, "SMALL BUSINESS   locked: promotion");
-	SetRow(r++, c_grey, "LARGE BUSINESS   locked: promotion");
-	SetRow(r++, c_grey, "CEOS             locked: promotion");
+	if (shown < 4) {
+		SetRow(r++, c_grey, "  more books here: later");
+		shown++;
+	}
+	for (; shown < 4; shown++) {
+		SetRow(r++, c_white, "");
+	}
+	if (category == 0) {
+		SetRow(r++, c_grey, "SMALL BUSINESS      by promotion");
+	} else {
+		SetRow(r++, c_grey, "RESIDENTIAL         done");
+	}
+	SetRow(r++, c_grey, "LARGE BUSINESS, CEOS   later");
+	if (m_sim.Promotions() || m_sim.Standing()) {
+		SetRow(r++, c_white, "Standing %-4d  promoted %d time%s", m_sim.Standing(), m_sim.Promotions(),
+			   m_sim.Promotions() == 1 ? "" : "s");
+	} else {
+		SetRow(r++, c_white, "");
+	}
 	if (m_save.WritingFile()) {
 		SetRow(r++, c_amber, "SAVING to card 1 - hands off");
 	} else if (m_save.CardOk()) {
@@ -775,7 +1052,76 @@ void BookScene::UpdateMenu(void) {
 	} else {
 		SetRow(r++, c_grey, "No memory card in slot 1: not saving");
 	}
-	SetRow(r++, c_grey, "X how to play       START back");
+	if (m_sim.PromotionReady()) {
+		SetRow(r++, (m_flashTimer & 32) ? c_amber : c_yellow, "X PROMOTION   SQ how to play");
+	} else {
+		SetRow(r++, c_grey, "X how to play       START back");
+	}
+}
+
+void BookScene::UpdatePromo(void) {
+	uint8_t r = ROW_OVER;
+	if (m_promo == 1) {
+		bool again = m_sim.Category() + 1 >= CATEGORY_COUNT;
+		SetRow(r++, c_amber, "           PROMOTION");
+		SetRow(r++, c_white, "");
+		SetRow(r++, c_white, again ? "Small business again, a new desk." : "Small business wants you upstairs.");
+		SetRow(r++, c_white, "");
+		SetRow(r++, c_white, "This run: %d calls, %d sales", m_sim.Calls(), m_sim.Connects());
+		SetRow(r++, c_green, "Standing +%d (a call /10, a sale /2)", m_sim.PromotionStanding());
+		SetRow(r++, c_white, "");
+		SetRow(r++, c_white, "You keep: standing and perks.");
+		SetRow(r++, c_white, "You lose: cash, books, lines and");
+		SetRow(r++, c_white, "the autodialer. Perks come next.");
+		SetRow(r++, c_white, "");
+		SetRow(r++, c_white, "");
+		SetRow(r++, (m_flashTimer & 32) ? c_amber : c_yellow, "X accept              O not yet");
+		return;
+	}
+	SetRow(r++, c_amber, "  PERKS          standing %d", m_sim.Standing());
+	SetRow(r++, c_white, "");
+	for (uint8_t p = 0; p < PERK_COUNT; p++) {
+		char cursor = m_promoSel == p ? '>' : ' ';
+		uint32_t price = m_sim.PerkPrice(p);
+		if (price == 0) {
+			SetRow(r++, c_grey, "%c%-12s lv %d   maxed", cursor, BookSim::c_perkNames[p], m_sim.PerkLevel(p));
+		} else {
+			bool afford = m_sim.Standing() >= price;
+			SetRow(r++, afford ? (m_promoSel == p ? c_amber : c_white) : c_grey, "%c%-12s lv %d   %d standing",
+				   cursor, BookSim::c_perkNames[p], m_sim.PerkLevel(p), price);
+		}
+	}
+	SetRow(r++, c_white, "");
+	switch (m_promoSel) {
+		case BookSim::PERK_PITCH:
+			SetRow(r++, c_green, "A sale's pitch: 12%% shorter a level");
+			SetRow(r++, c_white, "Now %d.%d s", m_sim.PitchTicks() / 60, m_sim.PitchTicks() % 60 / 6);
+			break;
+		case BookSim::PERK_PICKUP:
+			SetRow(r++, c_green, "Pick-up odds: +4 points a level");
+			SetRow(r++, c_white, "Now +%d", 4 * m_sim.PerkLevel(BookSim::PERK_PICKUP));
+			break;
+		case BookSim::PERK_AUTOMATION:
+			SetRow(r++, c_green, "Autodialer, motor, tray: 10%% off");
+			SetRow(r++, c_white, "a level. Now %d%% off", 10 * m_sim.PerkLevel(BookSim::PERK_AUTOMATION));
+			break;
+		default:
+			SetRow(r++, c_green, "Unspent standing keeps.");
+			SetRow(r++, c_white, "");
+			break;
+	}
+	SetRow(r++, c_white, "");
+	SetRow(r++, m_promoSel == PERK_COUNT ? c_amber : c_white, "%cStart: %s", m_promoSel == PERK_COUNT ? '>' : ' ',
+		   BookSim::c_books[m_panelBook].name);
+	SetRow(r++, c_white, "");
+	if (m_save.WritingFile()) {
+		SetRow(r++, c_amber, "SAVING to card 1 - hands off");
+	} else {
+		SetRow(r++, c_grey, "Up/Down, X buy or start");
+	}
+	for (; r < ROW_OVER + OVER_ROWS; r++) {
+		SetRow(r, c_white, "");
+	}
 }
 
 void BookScene::UpdateOverlayText(const char* const* rows, uint8_t count, bool blinkLast) {
@@ -815,8 +1161,8 @@ void BookScene::UpdateNoteScene(void) {
 }
 
 void BookScene::UpdateText(void) {
-	const auto& book = BookSim::c_books[m_sim.OpenBook()];
-	SetRow(ROW_TOP, c_amber, "$%-9d %13s %2d/%d", m_shownCash, book.name, m_sim.BookDialed(m_sim.OpenBook()),
+	const auto& book = BookSim::c_books[m_panelBook];
+	SetRow(ROW_TOP, c_amber, "$%-9d %13s %2d/%d", m_shownCash, book.name, m_sim.BookDialed(m_panelBook),
 		   book.entries);
 	if (m_sim.SupervisorRinging()) {
 		SetRow(ROW_CORP, (m_flashTimer & 16) ? c_red : c_white, "CORP LINE RINGING   R2 to answer");
@@ -870,6 +1216,43 @@ void BookScene::DrawKeyDigits(void) {
 	}
 }
 
+void BookScene::DrawReadout(void) {
+	// the autodialer's own display, like an alarm clock's: the number its shown call is on, then how
+	// many calls it has going out of how many it may run, and how long its list is
+	if (!m_sim.HasAutodialer()) {
+		return;
+	}
+	auto& gpu = g_madnightEngine.gpu();
+	psyqo::GTE::writeSafe<psyqo::GTE::PseudoRegister::Rotation>(m_camera.rotationMatrix());
+	psyqo::GTE::writeSafe<psyqo::GTE::PseudoRegister::Translation>(psyqo::Vec3{0, 0, 0});
+	psyqo::GTE::writeSafe<psyqo::GTE::PseudoRegister::V0>(desk::AUTOBOX_LED - m_camera.pos());
+	psyqo::GTE::Kernels::rtps();
+	psyqo::Vertex centre;
+	psyqo::GTE::read<psyqo::GTE::Register::SXY2>(&centre.packed);
+	int16_t x = centre.x - LED_W / 2, y = centre.y - LED_H / 2;
+	DrawBand(x, y, LED_W, LED_H, c_ledBack, false);
+
+	char top[12], bottom[12];
+	int8_t shown = m_sim.AutoShownLine();
+	const BookLine* line = shown >= 0 ? &m_sim.GetLine(shown) : nullptr;
+	if (line && line->byMachine && line->state != BookLineState::Idle) {
+		uint8_t o = 0;
+		for (uint8_t i = 0; i < line->digitCount; i++) {
+			if (i == 3) {
+				top[o++] = '-';
+			}
+			top[o++] = line->digits[i];
+		}
+		top[o] = 0;
+	} else {
+		snprintf(top, sizeof(top), "%s", m_sim.QueueLength() ? " READY" : "NO LIST");
+	}
+	snprintf(bottom, sizeof(bottom), "L%d/%d Q%d", m_sim.AutoActive(), m_sim.AutoLines(), m_sim.QueueLength());
+	m_glyphs.DrawText(gpu, top, {{.x = int16_t(x + 3), .y = int16_t(y + 3)}}, c_led);
+	m_glyphs.DrawText(gpu, bottom, {{.x = int16_t(x + 3), .y = int16_t(y + 3 + KeyGlyphs::GLYPH_H + 1)}},
+					  m_sim.AutodialerWorking() ? c_led : c_ledDim);
+}
+
 void BookScene::TickClock(void) {
 	auto& gpu = g_madnightEngine.gpu();
 	uint32_t now = gpu.getFrameCount();
@@ -881,9 +1264,10 @@ void BookScene::TickClock(void) {
 		m_playSeconds++;
 	}
 	// the card has the pad to itself while it writes (about 3 s), so a save waits for a natural pause:
-	// a book finished, the office opened, a corp call answered or missed, the note. In play it also waits
-	// for your line to be free and the shop and book panel to be shut; the office pauses the game anyway
-	bool calm = m_menu || (m_sim.HandLine() < 0 && !m_sim.SupervisorRinging() && !m_shop && !m_panel);
+	// a book finished, the office opened, a corp call answered or missed, the note, a promotion. In play
+	// it also waits for your line to be free and the shop and book panel to be shut; the office and
+	// the promotion screens pause the game anyway
+	bool calm = m_menu || m_promo || (m_sim.HandLine() < 0 && !m_sim.SupervisorRinging() && !m_shop && !m_panel);
 	if (m_savePending && !m_save.Writing() && !m_intro && !m_noteScene && calm) {
 		SaveNow();
 	}
@@ -898,7 +1282,7 @@ void BookScene::frame() {
 
 	m_flashTimer += deltaTime;
 	TickClock();
-	bool paused = m_intro || m_menu;
+	bool paused = m_intro || m_menu || m_promo;
 	if (!paused) {
 		if (!m_noteScene) {
 			m_sim.Tick(deltaTime);
@@ -945,13 +1329,6 @@ void BookScene::frame() {
 			m_tones.Line(0, Tones::Cue::None);
 		}
 
-		// a finished book goes on the pile and the next one opens
-		if (m_panelBook != m_sim.OpenBook() && m_sim.NoteState() == 0) {
-			m_panelBook = m_sim.OpenBook();
-			m_panelSel = 0;
-			ClearPanel();
-		}
-
 		uint32_t cash = m_sim.Cash();
 		if (m_shownCash > cash) {
 			m_shownCash = cash;
@@ -965,13 +1342,15 @@ void BookScene::frame() {
 	renderer.Render(deltaTime);
 
 	m_bandCount = 0;
-	if (m_intro || m_menu || m_noteScene) {
+	if (m_intro || m_menu || m_noteScene || m_promo) {
 		DrawBand(0, 0, 320, 240, c_band);
 		DrawBand(0, 0, 320, 240, c_band);
 		if (m_intro) {
 			UpdateOverlayText(c_intro, OVER_ROWS, true);
 		} else if (m_menu) {
 			UpdateMenu();
+		} else if (m_promo) {
+			UpdatePromo();
 		} else {
 			UpdateNoteScene();
 		}
@@ -984,13 +1363,15 @@ void BookScene::frame() {
 
 	if (!m_shop) {
 		DrawKeyDigits();
+		DrawReadout();
 	}
 	DrawBand(0, 0, 320, TOP_BAND_H, c_band);
 	int16_t bottom = m_toastTimer || m_save.WritingFile() ? c_rowY[ROW_TOAST] : c_rowY[ROW_HAND];
 	DrawBand(0, bottom - 4, 320, 240 - (bottom - 4), c_band);
 	if (m_shop) {
-		DrawBand(0, SHOP_FIRST_Y - 2, 320, 16 * 6 + 4, c_band);
-		DrawBand(0, SHOP_FIRST_Y - 2, 320, 16 * 6 + 4, c_band);
+		int16_t h = 16 * (ShopCount() + 2) + 4;
+		DrawBand(0, SHOP_FIRST_Y - 2, 320, h, c_band);
+		DrawBand(0, SHOP_FIRST_Y - 2, 320, h, c_band);
 	} else if (m_panel) {
 		DrawBand(PANEL_X - 6, PANEL_Y, 320 - PANEL_X + 6, 16 * PANEL_ROWS, c_band);
 		DrawBand(PANEL_X - 6, PANEL_Y, 320 - PANEL_X + 6, 16 * PANEL_ROWS, c_band);

@@ -15,31 +15,47 @@ static constexpr Glyph c_glyphs[] = {
 	{'6', {0x06, 0x08, 0x10, 0x1e, 0x11, 0x11, 0x0e}}, {'7', {0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08}},
 	{'8', {0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e}}, {'9', {0x0e, 0x11, 0x11, 0x0f, 0x01, 0x02, 0x0c}},
 	{'*', {0x00, 0x15, 0x0e, 0x1f, 0x0e, 0x15, 0x00}}, {'#', {0x0a, 0x0a, 0x1f, 0x0a, 0x1f, 0x0a, 0x0a}},
+	// the rest is for the autodialer's readout
+	{'-', {0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x00}}, {'/', {0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10}},
+	{'A', {0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11}}, {'D', {0x1e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1e}},
+	{'E', {0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f}}, {'I', {0x0e, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e}},
+	{'L', {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f}}, {'N', {0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11}},
+	{'O', {0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e}}, {'Q', {0x0e, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0d}},
+	{'R', {0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11}}, {'S', {0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e}},
+	{'T', {0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04}}, {'Y', {0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04}},
 };
 
 void KeyGlyphs::Init(psyqo::GPU& gpu) {
-	// psyqo's Font lays glyph (c - 32) at u = index * width along 256-texel rows; every glyph used
-	// here is below index 42, so they all sit in the first row: 256x8 texels of 4 bits, 1 = ink
-	static uint16_t texels[64 * GLYPH_H];
+	// psyqo's Font (FontBase::initialize) lays glyph index = c - 32 at u = index * width truncated to
+	// 8 bits and v = (index / 42) * height, 42 being glyphs of 6 per 256-texel row; so the second row
+	// does not start at u 0. Two rows of 256x8 texels of 4 bits, 1 = ink; no glyph used here sits
+	// across the u wrap (indices 42 and 43, J and K)
+	static constexpr int PER_ROW = 256 / GLYPH_W;
+	static uint16_t texels[64 * GLYPH_H * 2];
 	for (auto& t : texels) {
 		t = 0;
 	}
 	for (const auto& glyph : c_glyphs) {
-		int u0 = (glyph.c - 32) * GLYPH_W;
+		int index = glyph.c - 32;
+		int u0 = (index * GLYPH_W) & 0xff, v0 = (index / PER_ROW) * GLYPH_H;
 		for (int y = 0; y < 7; y++) {
 			for (int x = 0; x < 5; x++) {
 				if (glyph.rows[y] & (0x10 >> x)) {
 					int u = u0 + x;
-					texels[y * 64 + u / 4] |= 1 << ((u % 4) * 4);
+					texels[(v0 + y) * 64 + u / 4] |= 1 << ((u % 4) * 4);
 				}
 			}
 		}
 	}
-	gpu.uploadToVRAM(texels, {.pos = c_location, .size = {{.w = 64, .h = GLYPH_H}}});
+	gpu.uploadToVRAM(texels, {.pos = c_location, .size = {{.w = 64, .h = GLYPH_H * 2}}});
 	m_font.initialize(gpu, c_location, {{.w = GLYPH_W, .h = GLYPH_H}});
 }
 
 void KeyGlyphs::Draw(psyqo::GPU& gpu, char glyph, psyqo::Vertex pos, psyqo::Color colour) {
 	char text[2] = {glyph, 0};
 	m_font.chainprint(gpu, text, {{.x = int16_t(pos.x - 2), .y = int16_t(pos.y - 3)}}, colour);
+}
+
+void KeyGlyphs::DrawText(psyqo::GPU& gpu, const char* text, psyqo::Vertex pos, psyqo::Color colour) {
+	m_font.chainprint(gpu, text, pos, colour);
 }

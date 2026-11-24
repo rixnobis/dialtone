@@ -6,32 +6,50 @@
 #include <psyqo/xprintf.h>
 #include <stdarg.h>
 
-// four residential books, each longer and better than the last: fewer duds, but people pick up less
+// four residential books, each longer and better paid than the last, then small business. About a
+// third of the people who listen buy; the rest waste your time and pay only the fee
 const eastl::array<Book, BOOK_COUNT> BookSim::c_books = {{
-	{.name = "Elm Street", .entries = 16, .dudPercent = 30, .pickupPercent = 40, .fee = 1, .bonus = 6},
-	{.name = "Oak Avenue", .entries = 24, .dudPercent = 25, .pickupPercent = 34, .fee = 1, .bonus = 9},
-	{.name = "Maple Heights", .entries = 32, .dudPercent = 20, .pickupPercent = 28, .fee = 2, .bonus = 14},
-	{.name = "Pine Ridge", .entries = 40, .dudPercent = 15, .pickupPercent = 24, .fee = 2, .bonus = 20},
+	{.name = "Elm Street", .category = 0, .entries = 16, .dudPercent = 30, .pickupPercent = 60, .salePercent = 34,
+	 .fee = 1, .bonus = 12, .price = 0, .unlockAfter = 0},
+	{.name = "Oak Avenue", .category = 0, .entries = 24, .dudPercent = 25, .pickupPercent = 54, .salePercent = 34,
+	 .fee = 1, .bonus = 18, .price = 20, .unlockAfter = 1},
+	{.name = "Maple Heights", .category = 0, .entries = 32, .dudPercent = 20, .pickupPercent = 48, .salePercent = 33,
+	 .fee = 2, .bonus = 28, .price = 45, .unlockAfter = 1},
+	{.name = "Pine Ridge", .category = 0, .entries = 40, .dudPercent = 15, .pickupPercent = 42, .salePercent = 33,
+	 .fee = 2, .bonus = 40, .price = 90, .unlockAfter = 2},
+	{.name = "Main St Shops", .category = 1, .entries = 32, .dudPercent = 20, .pickupPercent = 50, .salePercent = 36,
+	 .fee = 4, .bonus = 60, .price = 0, .unlockAfter = 0},
 }};
+
+const char* const BookSim::c_categories[CATEGORY_COUNT] = {"RESIDENTIAL", "SMALL BUSINESS"};
+const char* const BookSim::c_perkNames[PERK_COUNT] = {"Fast talker", "Warm voice", "Bulk buyer"};
 
 // all in vsync ticks
 static constexpr uint16_t CONNECT_TICKS = 24;
 static constexpr uint16_t DEAD_TICKS = 20;
 static constexpr uint16_t NO_ANSWER_TICKS = 330;
-static constexpr uint16_t PITCH_TICKS = 150;
+static constexpr uint16_t PITCH_TICKS = 240;	 // a sale: the whole pitch, shorter with Fast talker
+static constexpr uint16_t NO_SALE_TICKS = 150; // they listen a while, then "no thanks"
 static constexpr uint16_t HANG_UP_TALK_TICKS = 40;
 static constexpr uint16_t NOTE_RING_TICKS = 150;
 static constexpr uint16_t FIRST_SUPERVISOR_TICKS = 60 * 60;
+static constexpr uint16_t AUTO_STAGGER_TICKS = 30; // between two of the autodialer's calls starting
 // measured on book 1 (9 hand calls, seed 12345, Redux): the call itself averages 188 ticks (3.1 s) after
 // the 7th digit, and walking the keypad cursor is 12.5 presses per number. At 2 to 3 presses a second by
 // hand that is 8 to 10 s a call, 18 to 23 calls in the shortest corp gap (180 s, longer when the corp
 // clock pauses for a pitch). 8 is under half of the slow end; the cap is about 60% of the fast end
 static constexpr uint16_t QUOTA_PER_LINE_BASE = 8, QUOTA_PER_LINE_STEP = 2, QUOTA_PER_LINE_MAX = 14;
 static constexpr uint32_t LINE_BASE_PRICE = 30;
-static constexpr uint32_t AUTODIALER_PRICE = 25;
+static constexpr uint32_t AUTODIALER_PRICE = 25; // doubles per level, like a line
+static constexpr uint32_t AUTO_HIGH_TIER_FACTOR = 3;
 static constexpr uint32_t MOTOR_PRICES[BookSim::MAX_MOTOR] = {60, 150};
 static constexpr uint32_t TRAY_PRICES[BookSim::MAX_TRAY] = {80, 200};
 static constexpr uint8_t MISSED_CALL_FINE = 3;
+// perks: per level
+static constexpr uint8_t PERK_PITCH_PERCENT = 12, PERK_PICKUP_POINTS = 4, PERK_DISCOUNT_PERCENT = 10;
+static constexpr uint32_t PERK_BASE_PRICE = 4;
+// standing for a promotion: a point per this many calls, and per this many sales
+static constexpr uint32_t STANDING_CALLS = 10, STANDING_SALES = 2;
 
 static constexpr const char* c_corpIdle[] = {
 	"Smile and dial.",
@@ -65,21 +83,61 @@ void BookSim::Generate(void) {
 		}
 		return false;
 	};
-	for (uint8_t b = 0; b < BOOK_COUNT; b++) {
+	auto generate = [&](uint8_t b) {
 		for (uint8_t i = 0; i < c_books[b].entries; i++) {
 			uint16_t suffix;
 			uint32_t k = 0;
 			do {
 				suffix = Hash(b * 64 + i, k++) % 10000;
-			} while (suffix < 100 || used(suffix, b, i));
+			} while (suffix < 100 || used(suffix, b, i) || (b >= RESIDENTIAL_BOOKS && suffix == m_noteNumber));
 			m_numbers[b][i] = suffix;
 			m_duds[b][i] = Hash(b * 64 + i, 0xd0d) % 100 < c_books[b].dudPercent;
 		}
+	};
+	// the residential books and the note first, in the order phase 1 drew them, so its saves keep
+	// their numbers
+	for (uint8_t b = 0; b < RESIDENTIAL_BOOKS; b++) {
+		generate(b);
 	}
 	uint32_t k = 0;
 	do {
 		m_noteNumber = Hash(0x707e, k++) % 10000;
-	} while (m_noteNumber < 100 || used(m_noteNumber, BOOK_COUNT, 0));
+	} while (m_noteNumber < 100 || used(m_noteNumber, RESIDENTIAL_BOOKS, 0));
+	for (uint8_t b = RESIDENTIAL_BOOKS; b < BOOK_COUNT; b++) {
+		generate(b);
+	}
+}
+
+void BookSim::ResetRun(void) {
+	m_cash = m_earned = m_calls = m_connects = m_dudCalls = 0;
+	for (uint8_t b = 0; b < BOOK_COUNT; b++) {
+		for (uint8_t i = 0; i < BOOK_MAX_ENTRIES; i++) {
+			m_status[b][i] = 0;
+		}
+	}
+	// the category's first book is handed to you
+	m_owned = 0;
+	for (uint8_t b = 0; b < BOOK_COUNT; b++) {
+		if (c_books[b].category == m_category && c_books[b].price == 0) {
+			m_owned |= 1 << b;
+		}
+	}
+	m_lineCount = 1;
+	for (uint8_t i = 0; i < BOOK_MAX_LINES; i++) {
+		m_lines[i] = BookLine();
+		m_lines[i].state = i < m_lineCount ? BookLineState::Idle : BookLineState::Locked;
+	}
+	m_handLine = -1;
+	m_lastHandLine = 0;
+	m_autoLevel = m_motor = m_tray = 0;
+	m_queueLength = m_queueCursor = 0;
+	m_autoStagger = 0;
+	m_autoShown = -1;
+	m_supRinging = false;
+	m_supTimer = FIRST_SUPERVISOR_TICKS;
+	m_supervisorCalls = 0;
+	m_quota = 0;
+	m_quotaFrom = 0;
 }
 
 void BookSim::Init(Rand* rand, BookListener* listener, uint32_t seed) {
@@ -87,13 +145,8 @@ void BookSim::Init(Rand* rand, BookListener* listener, uint32_t seed) {
 	m_listener = listener;
 	m_seed = seed;
 	Generate();
-	for (uint8_t i = 0; i < BOOK_MAX_LINES; i++) {
-		m_lines[i] = BookLine();
-		m_lines[i].state = i < m_lineCount ? BookLineState::Idle : BookLineState::Locked;
-	}
-	m_supTimer = FIRST_SUPERVISOR_TICKS;
+	ResetRun();
 	SetCorp("Pick up the book. Start dialing.");
-	m_lastOpenBook = OpenBook();
 	printf("DIALTONE: books seed=%08x note=555%04d\n", m_seed, m_noteNumber);
 #ifdef DIALTONE_SEED
 	// a fixed seed is for scripted runs, which need the numbers to dial
@@ -129,21 +182,105 @@ uint8_t BookSim::BookDialed(uint8_t book) const {
 	return n;
 }
 
-uint8_t BookSim::BooksDone(void) const {
+uint8_t BookSim::BooksIn(uint8_t category) const {
 	uint8_t n = 0;
-	for (uint8_t b = 0; b < BOOK_COUNT; b++) {
-		n += BookDone(b);
+	for (const auto& book : c_books) {
+		n += book.category == category;
 	}
 	return n;
 }
 
-uint8_t BookSim::OpenBook(void) const {
+uint8_t BookSim::BooksDoneIn(uint8_t category) const {
+	uint8_t n = 0;
 	for (uint8_t b = 0; b < BOOK_COUNT; b++) {
-		if (!BookDone(b)) {
+		n += c_books[b].category == category && Owned(b) && BookDone(b);
+	}
+	return n;
+}
+
+uint8_t BookSim::FirstOwned(void) const {
+	for (uint8_t b = 0; b < BOOK_COUNT; b++) {
+		if (Owned(b) && !BookDone(b)) {
 			return b;
 		}
 	}
-	return BOOK_COUNT - 1;
+	for (uint8_t b = 0; b < BOOK_COUNT; b++) {
+		if (Owned(b)) {
+			return b;
+		}
+	}
+	return 0;
+}
+
+uint8_t BookSim::NextOwned(uint8_t book, int8_t direction) const {
+	for (uint8_t step = 1; step < BOOK_COUNT; step++) {
+		uint8_t b = (book + BOOK_COUNT + direction * step) % BOOK_COUNT;
+		if (Owned(b)) {
+			return b;
+		}
+	}
+	return book;
+}
+
+bool BookSim::NextUncalled(uint8_t& book, uint8_t& entry) const {
+	// numbers already on the autodialer's list are its job: skip them unless nothing else is left
+	for (uint8_t pass = 0; pass < 2; pass++) {
+		uint8_t b = book;
+		for (uint8_t books = 0; books <= BOOK_COUNT; books++) {
+			if (Owned(b)) {
+				uint8_t n = c_books[b].entries;
+				// the first book from the entry after the cursor, the others from the top
+				uint8_t from = books == 0 ? entry + 1 : 0;
+				uint8_t count = books == 0 ? n : n;
+				for (uint8_t k = 0; k < count; k++) {
+					uint8_t i = (from + k) % n;
+					if (m_status[b][i] == uint8_t(Entry::Unknown) && (pass == 1 || !IsQueued(b, i))) {
+						book = b;
+						entry = i;
+						return true;
+					}
+				}
+			}
+			b = (b + 1) % BOOK_COUNT;
+		}
+	}
+	return false;
+}
+
+bool BookSim::ForSale(uint8_t book) const {
+	const auto& b = c_books[book];
+	return !Owned(book) && b.category == m_category && BooksDoneIn(m_category) >= b.unlockAfter;
+}
+
+uint8_t BookSim::ForSaleList(uint8_t* out) const {
+	uint8_t n = 0;
+	for (uint8_t b = 0; b < BOOK_COUNT; b++) {
+		if (ForSale(b)) {
+			out[n++] = b;
+		}
+	}
+	return n;
+}
+
+bool BookSim::BuyBook(uint8_t book) {
+	if (!ForSale(book) || m_cash < c_books[book].price) {
+		return false;
+	}
+	m_cash -= c_books[book].price;
+	m_owned |= 1 << book;
+	printf("DIALTONE: bought book %d %s price=%d cash=%d\n", book + 1, c_books[book].name, c_books[book].price,
+		   m_cash);
+	return true;
+}
+
+uint8_t BookSim::PickupPercent(uint8_t book) const {
+	return eastl::min<uint8_t>(95, c_books[book].pickupPercent + PERK_PICKUP_POINTS * m_perks[PERK_PICKUP]);
+}
+
+uint8_t BookSim::SalePercent(uint8_t book) const { return PickupPercent(book) * c_books[book].salePercent / 100; }
+
+uint16_t BookSim::PitchTicks(void) const {
+	return PITCH_TICKS * (100 - PERK_PITCH_PERCENT * m_perks[PERK_PITCH]) / 100;
 }
 
 uint8_t BookSim::LinesBusy(void) const {
@@ -240,8 +377,11 @@ void BookSim::StartCall(uint8_t index) {
 		suffix = suffix * 10 + (line.digits[i] - '0');
 		ours &= line.digits[i] >= '0' && line.digits[i] <= '9';
 	}
-	// any open book counts, earlier ones too
-	for (uint8_t b = 0; ours && b <= OpenBook() && line.entry == ENTRY_NONE; b++) {
+	// any book you own counts, finished ones too
+	for (uint8_t b = 0; ours && b < BOOK_COUNT && line.entry == ENTRY_NONE; b++) {
+		if (!Owned(b)) {
+			continue;
+		}
 		for (uint8_t i = 0; i < c_books[b].entries; i++) {
 			if (m_numbers[b][i] == suffix) {
 				line.book = b;
@@ -270,11 +410,10 @@ void BookSim::StartCall(uint8_t index) {
 		return;
 	}
 
-	const auto& book = c_books[line.book];
 	bool sold = m_status[line.book][line.entry] == uint8_t(Entry::Sold);
-	// somebody who already heard the pitch hangs up on you
-	if (!sold && m_rand->rand(100) < book.pickupPercent) {
-		line.pending = CallOutcome::Sold;
+	// somebody who already bought hangs up on you; of the ones who listen, about a third buy
+	if (!sold && m_rand->rand(100) < PickupPercent(line.book)) {
+		line.pending = m_rand->rand(100) < c_books[line.book].salePercent ? CallOutcome::Sold : CallOutcome::NoSale;
 		line.timer = 60 + m_rand->rand(91);
 	} else if (sold || m_rand->rand(2)) {
 		line.pending = CallOutcome::HungUp;
@@ -301,9 +440,12 @@ void BookSim::EndCall(uint8_t index, CallOutcome outcome) {
 				break;
 			case CallOutcome::NoAnswer:
 			case CallOutcome::HungUp:
+			case CallOutcome::NoSale:
 				line.paid = book.fee;
 				if (status != uint8_t(Entry::Sold)) {
-					status = uint8_t(outcome == CallOutcome::NoAnswer ? Entry::NoAnswer : Entry::HungUp);
+					status = uint8_t(outcome == CallOutcome::NoAnswer ? Entry::NoAnswer
+									 : outcome == CallOutcome::HungUp ? Entry::HungUp
+																	  : Entry::NoSale);
 				}
 				break;
 			case CallOutcome::Sold:
@@ -333,13 +475,19 @@ void BookSim::EndCall(uint8_t index, CallOutcome outcome) {
 		m_handLine = -1;
 	}
 	if (line.byMachine) {
-		m_autoPause = AutodialPauseTicks();
+		// the line it used rests before it dials on it again
+		line.timer = AutodialPauseTicks();
 	}
 	CheckNote();
 }
 
 void BookSim::CheckNote(void) {
-	if (m_noteState == 0 && BooksDone() == BOOK_COUNT) {
+	for (uint8_t b = 0; b < RESIDENTIAL_BOOKS; b++) {
+		if (!Owned(b) || !BookDone(b)) {
+			return;
+		}
+	}
+	if (m_noteState == 0) {
 		m_noteState = 1;
 		printf("DIALTONE: note slipped in, 555%04d calls=%d earned=%d connects=%d\n", m_noteNumber, m_calls, m_earned,
 			   m_connects);
@@ -350,6 +498,12 @@ void BookSim::CheckNote(void) {
 void BookSim::TickLine(uint8_t index) {
 	auto& line = m_lines[index];
 	switch (line.state) {
+		case BookLineState::Idle:
+			// an autodialer line resting after its call
+			if (line.byMachine && line.timer) {
+				line.timer--;
+			}
+			break;
 		case BookLineState::Dialing:
 			if (line.byMachine && line.digitCount < BOOK_NUMBER_LENGTH) {
 				if (++line.timer >= AutodialDigitTicks()) {
@@ -368,9 +522,11 @@ void BookSim::TickLine(uint8_t index) {
 			if (--line.timer) {
 				break;
 			}
-			if (line.pending == CallOutcome::Sold) {
+			if (line.pending == CallOutcome::Sold || line.pending == CallOutcome::NoSale) {
 				line.state = BookLineState::Talking;
-				line.timer = PITCH_TICKS;
+				line.timer = line.pending == CallOutcome::Sold ? PitchTicks() : NO_SALE_TICKS;
+				printf("DIALTONE: listening line=%d machine=%d %s ticks=%d\n", index, line.byMachine,
+					   line.pending == CallOutcome::Sold ? "sale" : "no-sale", line.timer);
 				m_listener->OnHangUp(index); // ringback stops, they are listening
 			} else if (line.pending == CallOutcome::HungUp) {
 				line.state = BookLineState::Talking;
@@ -400,13 +556,21 @@ void BookSim::TickLine(uint8_t index) {
 	}
 }
 
-bool BookSim::AutodialerWorking(void) const {
-	for (uint8_t i = 0; i < m_lineCount; i++) {
-		if (m_lines[i].byMachine && m_lines[i].state != BookLineState::Idle) {
-			return true;
-		}
+uint8_t BookSim::AutoLines(void) const {
+	if (!m_autoLevel) {
+		return 0;
 	}
-	return false;
+	// one line stays the handset's; with a single line the two take turns on it
+	uint8_t cap = m_lineCount > 1 ? m_lineCount - 1 : 1;
+	return eastl::min(m_autoLevel, cap);
+}
+
+uint8_t BookSim::AutoActive(void) const {
+	uint8_t n = 0;
+	for (uint8_t i = 0; i < m_lineCount; i++) {
+		n += m_lines[i].byMachine && m_lines[i].state != BookLineState::Idle;
+	}
+	return n;
 }
 
 uint8_t BookSim::AutodialDigitTicks(void) const {
@@ -420,17 +584,25 @@ uint16_t BookSim::AutodialPauseTicks(void) const {
 }
 
 void BookSim::TickAutodialer(void) {
-	// one call at a time, straight down its list and round again, duds and all
-	if (!m_autodialer || m_queueLength == 0 || AutodialerWorking()) {
+	// up to AutoLines() calls at once, straight down its list and round again, duds and all
+	if (m_autoStagger) {
+		m_autoStagger--;
+	}
+	if (!m_autoLevel || m_queueLength == 0 || m_autoStagger) {
 		return;
 	}
-	if (m_autoPause) {
-		m_autoPause--;
+	// resting lines count against it, so one level is still one call and a rest, as in phase 1
+	uint8_t busy = 0;
+	for (uint8_t i = 0; i < m_lineCount; i++) {
+		busy += m_lines[i].byMachine && (m_lines[i].state != BookLineState::Idle || m_lines[i].timer);
+	}
+	if (busy >= AutoLines()) {
 		return;
 	}
 	int8_t free = -1;
 	for (uint8_t i = 0; i < m_lineCount; i++) {
-		if (m_lines[i].state == BookLineState::Idle && i != m_handLine) {
+		const auto& l = m_lines[i];
+		if (l.state == BookLineState::Idle && i != m_handLine && !(l.byMachine && l.timer)) {
 			free = i;
 			break;
 		}
@@ -438,11 +610,27 @@ void BookSim::TickAutodialer(void) {
 	if (free < 0) {
 		return;
 	}
-	if (m_queueCursor >= m_queueLength) {
-		m_queueCursor = 0;
+	// the next number on the list that no other line of its is already calling
+	int8_t pick = -1;
+	for (uint8_t k = 0; k < m_queueLength && pick < 0; k++) {
+		if (m_queueCursor >= m_queueLength) {
+			m_queueCursor = 0;
+		}
+		const auto& item = m_queue[m_queueCursor];
+		m_queueCursor++; // wrapped when it is next used, so numbers listed meanwhile still get their turn
+		bool taken = false;
+		for (uint8_t i = 0; i < m_lineCount; i++) {
+			const auto& l = m_lines[i];
+			taken |= l.byMachine && l.state != BookLineState::Idle && l.book == item.book && l.entry == item.entry;
+		}
+		if (!taken) {
+			pick = int8_t((m_queueCursor + m_queueLength - 1) % m_queueLength);
+		}
 	}
-	const auto& item = m_queue[m_queueCursor];
-	m_queueCursor++; // wrapped when it is next used, so numbers listed meanwhile still get their turn
+	if (pick < 0) {
+		return;
+	}
+	const auto& item = m_queue[pick];
 	auto& line = m_lines[free];
 	line.state = BookLineState::Dialing;
 	line.byMachine = true;
@@ -450,25 +638,34 @@ void BookSim::TickAutodialer(void) {
 	line.timer = 0;
 	line.outcome = CallOutcome::None;
 	line.paid = 0;
+	line.book = item.book;
+	line.entry = item.entry;
 	EntryNumber(item.book, item.entry, line.digits);
-	printf("DIALTONE: autodial line=%d 555-%04d\n", free, m_numbers[item.book][item.entry]);
+	m_autoStagger = AUTO_STAGGER_TICKS;
+	// its readout follows one call, and moves on when that one is over
+	if (m_autoShown < 0 || m_lines[m_autoShown].state == BookLineState::Idle || !m_lines[m_autoShown].byMachine) {
+		m_autoShown = free;
+	}
+	printf("DIALTONE: autodial line=%d 555-%04d active=%d/%d\n", free, m_numbers[item.book][item.entry], AutoActive(),
+		   AutoLines());
 }
 
 uint8_t BookSim::PruneQueue(void) {
-	uint8_t open = OpenBook(), kept = 0, cursor = 0;
+	uint8_t kept = 0, cursor = 0;
 	for (uint8_t i = 0; i < m_queueLength; i++) {
-		if (m_queue[i].book == open) {
+		const auto& item = m_queue[i];
+		if (Owned(item.book) && !BookDone(item.book)) {
 			if (i < m_queueCursor) {
 				cursor++;
 			}
-			m_queue[kept++] = m_queue[i];
+			m_queue[kept++] = item;
 		}
 	}
 	uint8_t dropped = m_queueLength - kept;
 	m_queueLength = kept;
 	m_queueCursor = cursor;
 	if (dropped) {
-		printf("DIALTONE: list dropped %d numbers not in book %d, %d left\n", dropped, open + 1, kept);
+		printf("DIALTONE: list dropped %d numbers from finished books, %d left\n", dropped, kept);
 	}
 	return dropped;
 }
@@ -567,23 +764,38 @@ bool BookSim::AnswerSupervisor(void) {
 	return true;
 }
 
+uint32_t BookSim::AutomationPrice(uint32_t base) const {
+	return base * (100 - PERK_DISCOUNT_PERCENT * m_perks[PERK_AUTOMATION]) / 100;
+}
+
+bool BookSim::ShopLocked(uint8_t item) const {
+	return item == 1 && m_autoLevel >= AUTO_RESIDENTIAL_MAX && m_autoLevel < AUTO_MAX && m_promotions == 0;
+}
+
 uint32_t BookSim::ShopPrice(uint8_t item) const {
 	switch (item) {
 		case 0:
 			return m_lineCount < BOOK_MAX_LINES ? LINE_BASE_PRICE << (m_lineCount - 1) : 0;
-		case 1:
-			if (!m_autodialer) {
-				return AUTODIALER_PRICE;
+		case 1: {
+			if (m_autoLevel >= AUTO_MAX) {
+				return 0;
 			}
-			return m_motor < MAX_MOTOR ? MOTOR_PRICES[m_motor] : 0;
+			uint32_t base = AUTODIALER_PRICE << m_autoLevel;
+			if (m_autoLevel >= AUTO_RESIDENTIAL_MAX) {
+				base *= AUTO_HIGH_TIER_FACTOR;
+			}
+			return AutomationPrice(base);
+		}
+		case 2:
+			return m_autoLevel && m_motor < MAX_MOTOR ? AutomationPrice(MOTOR_PRICES[m_motor]) : 0;
 		default:
-			return m_autodialer && m_tray < MAX_TRAY ? TRAY_PRICES[m_tray] : 0;
+			return m_autoLevel && m_tray < MAX_TRAY ? AutomationPrice(TRAY_PRICES[m_tray]) : 0;
 	}
 }
 
 bool BookSim::Buy(uint8_t item) {
 	uint32_t price = ShopPrice(item);
-	if (price == 0 || m_cash < price) {
+	if (price == 0 || m_cash < price || ShopLocked(item)) {
 		return false;
 	}
 	m_cash -= price;
@@ -592,18 +804,70 @@ bool BookSim::Buy(uint8_t item) {
 			m_lines[m_lineCount++].state = BookLineState::Idle;
 			break;
 		case 1:
-			if (!m_autodialer) {
-				m_autodialer = true;
-			} else {
-				m_motor++;
-			}
+			m_autoLevel++;
+			break;
+		case 2:
+			m_motor++;
 			break;
 		default:
 			m_tray++;
 			break;
 	}
-	printf("DIALTONE: bought item %d price=%d cash=%d lines=%d auto=%d motor=%d tray=%d\n", item, price, m_cash,
-		   m_lineCount, m_autodialer, m_motor, m_tray);
+	printf("DIALTONE: bought item %d price=%d cash=%d lines=%d auto=%d (runs %d) motor=%d tray=%d\n", item, price,
+		   m_cash, m_lineCount, m_autoLevel, AutoLines(), m_motor, m_tray);
+	return true;
+}
+
+bool BookSim::PromotionReady(void) const {
+	if (m_category == 0) {
+		return m_noteState == 3;
+	}
+	return BooksDoneIn(m_category) == BooksIn(m_category);
+}
+
+uint32_t BookSim::PromotionStanding(void) const {
+	return eastl::max<uint32_t>(1, m_calls / STANDING_CALLS + m_connects / STANDING_SALES);
+}
+
+void BookSim::Promote(void) {
+	uint32_t pay = PromotionStanding();
+	m_standing += pay;
+	m_promotions++;
+	m_category = eastl::min<uint8_t>(m_category + 1, CATEGORY_COUNT - 1);
+	printf("DIALTONE: promoted #%d to %s standing +%d = %d (calls=%d sales=%d)\n", m_promotions,
+		   c_categories[m_category], pay, m_standing, m_calls, m_connects);
+	// new books, a new desk
+	m_seed = m_seed * 1664525u + 1013904223u;
+	Generate();
+	ResetRun();
+	SetCorp("Promoted. Do not let it show.");
+#ifdef DIALTONE_SEED
+	for (uint8_t b = 0; b < BOOK_COUNT; b++) {
+		if (c_books[b].category == m_category) {
+			printf("DIALTONE: book %d", b + 1);
+			for (uint8_t i = 0; i < c_books[b].entries; i++) {
+				printf(" 555%04d%s", m_numbers[b][i], m_duds[b][i] ? "x" : "");
+			}
+			printf("\n");
+		}
+	}
+#endif
+}
+
+uint32_t BookSim::PerkPrice(uint8_t perk) const {
+	return m_perks[perk] < PERK_MAX ? PERK_BASE_PRICE * (m_perks[perk] + 1) : 0;
+}
+
+bool BookSim::BuyPerk(uint8_t perk) {
+	uint32_t price = PerkPrice(perk);
+	if (price == 0 || m_standing < price) {
+		return false;
+	}
+	m_standing -= price;
+	m_perks[perk]++;
+	printf("DIALTONE: perk %s lv%d price=%d standing=%d pitch=%d pickup+%d discount=%d%%\n", c_perkNames[perk],
+		   m_perks[perk], price, m_standing, PitchTicks(), PERK_PICKUP_POINTS * m_perks[PERK_PICKUP],
+		   PERK_DISCOUNT_PERCENT * m_perks[PERK_AUTOMATION]);
 	return true;
 }
 
@@ -620,7 +884,6 @@ void BookSim::Tick(uint32_t ticks) {
 			SetCorp("%s", c_corpIdle[m_rand->rand(sizeof(c_corpIdle) / sizeof(c_corpIdle[0]))]);
 		}
 	}
-	m_lastOpenBook = OpenBook();
 }
 
 void BookSim::Save(BookSave& out) const {
@@ -637,7 +900,7 @@ void BookSim::Save(BookSave& out) const {
 		}
 	}
 	out.lines = m_lineCount;
-	out.autodialer = m_autodialer;
+	out.autoLevel = m_autoLevel;
 	out.motor = m_motor;
 	out.tray = m_tray;
 	out.queueLength = m_queueLength;
@@ -646,9 +909,54 @@ void BookSim::Save(BookSave& out) const {
 		out.queue[i] = m_queue[i];
 	}
 	out.noteState = m_noteState == 2 ? 1 : m_noteState; // a call cut off by the save is not over
+	out.owned = m_owned;
 	out.supervisorCalls = m_supervisorCalls;
 	out.quota = m_quota;
 	out.quotaFrom = m_quotaFrom;
+	out.standing = m_standing;
+	for (uint8_t p = 0; p < PERK_COUNT; p++) {
+		out.perks[p] = m_perks[p];
+	}
+	out.category = m_category;
+	out.promotions = m_promotions;
+}
+
+void BookSim::Migrate(const BookSaveV1& in, BookSave& out) {
+	out = BookSave{};
+	out.seed = in.seed;
+	out.cash = in.cash;
+	out.earned = in.earned;
+	out.calls = in.calls;
+	out.connects = in.connects;
+	out.dudCalls = in.dudCalls;
+	// phase 1 handed you the books in order: every finished one and the first unfinished one are yours
+	bool open = true;
+	for (uint8_t b = 0; b < RESIDENTIAL_BOOKS; b++) {
+		uint8_t dialed = 0;
+		for (uint8_t i = 0; i < BOOK_MAX_ENTRIES; i++) {
+			out.status[b][i] = in.status[b][i];
+			dialed += i < c_books[b].entries && in.status[b][i] != 0;
+		}
+		if (open) {
+			out.owned |= 1 << b;
+		}
+		open &= dialed == c_books[b].entries;
+	}
+	out.lines = in.lines;
+	out.autoLevel = in.autodialer ? 1 : 0;
+	out.motor = in.motor;
+	out.tray = in.tray;
+	out.queueLength = in.queueLength;
+	out.queueCursor = in.queueCursor;
+	for (uint8_t i = 0; i < QUEUE_MAX; i++) {
+		out.queue[i] = in.queue[i];
+	}
+	out.noteState = in.noteState;
+	out.supervisorCalls = in.supervisorCalls;
+	out.quota = in.quota;
+	out.quotaFrom = in.quotaFrom;
+	printf("DIALTONE: migrated a phase 1 save: owned=%02x auto=%d cash=%d calls=%d note=%d\n", out.owned,
+		   out.autoLevel, out.cash, out.calls, out.noteState);
 }
 
 void BookSim::Load(const BookSave& in) {
@@ -661,8 +969,14 @@ void BookSim::Load(const BookSave& in) {
 	m_dudCalls = in.dudCalls;
 	for (uint8_t b = 0; b < BOOK_COUNT; b++) {
 		for (uint8_t i = 0; i < BOOK_MAX_ENTRIES; i++) {
-			m_status[b][i] = i < c_books[b].entries && in.status[b][i] <= uint8_t(Entry::Sold) ? in.status[b][i] : 0;
+			m_status[b][i] =
+				i < c_books[b].entries && in.status[b][i] <= uint8_t(Entry::NoSale) ? in.status[b][i] : 0;
 		}
+	}
+	m_category = eastl::min<uint8_t>(in.category, CATEGORY_COUNT - 1);
+	m_owned = in.owned & ((1 << BOOK_COUNT) - 1);
+	if (!m_owned) {
+		m_owned = 1 << (m_category == 0 ? 0 : RESIDENTIAL_BOOKS);
 	}
 	m_lineCount = eastl::clamp<uint8_t>(in.lines, 1, BOOK_MAX_LINES);
 	for (uint8_t i = 0; i < BOOK_MAX_LINES; i++) {
@@ -671,9 +985,11 @@ void BookSim::Load(const BookSave& in) {
 	}
 	m_handLine = -1;
 	m_lastHandLine = 0;
-	m_autodialer = in.autodialer;
+	m_autoLevel = eastl::min<uint8_t>(in.autoLevel, AUTO_MAX);
 	m_motor = eastl::min<uint8_t>(in.motor, MAX_MOTOR);
 	m_tray = eastl::min<uint8_t>(in.tray, MAX_TRAY);
+	m_autoStagger = 0;
+	m_autoShown = -1;
 	m_queueLength = 0;
 	for (uint8_t i = 0; i < eastl::min<uint8_t>(in.queueLength, QueueCapacity()); i++) {
 		if (in.queue[i].book < BOOK_COUNT && in.queue[i].entry < c_books[in.queue[i].book].entries) {
@@ -681,23 +997,28 @@ void BookSim::Load(const BookSave& in) {
 		}
 	}
 	m_queueCursor = m_queueLength ? in.queueCursor % m_queueLength : 0;
-	PruneQueue(); // a save made before this rule can hold a finished book's numbers
+	PruneQueue();
 	m_noteState = eastl::min<uint8_t>(in.noteState, 3);
 	m_supervisorCalls = in.supervisorCalls;
 	m_quota = in.quota;
 	m_quotaFrom = eastl::min(in.quotaFrom, m_calls);
 	m_supRinging = false;
 	m_supTimer = FIRST_SUPERVISOR_TICKS;
-	m_lastOpenBook = OpenBook();
+	m_standing = in.standing;
+	for (uint8_t p = 0; p < PERK_COUNT; p++) {
+		m_perks[p] = eastl::min<uint8_t>(in.perks[p], PERK_MAX);
+	}
+	m_promotions = in.promotions;
 	CheckNote();
-	printf("DIALTONE: books loaded seed=%08x cash=%d calls=%d books=%d note=%d\n", m_seed, m_cash, m_calls,
-		   BooksDone(), m_noteState);
+	printf("DIALTONE: books loaded seed=%08x cash=%d calls=%d owned=%02x done=%d note=%d category=%d standing=%d\n",
+		   m_seed, m_cash, m_calls, m_owned, BooksDoneIn(m_category), m_noteState, m_category, m_standing);
 }
 
 void BookSim::DebugPredial(uint8_t leave) {
-	for (uint8_t b = 0; b < BOOK_COUNT; b++) {
+	for (uint8_t b = 0; b < RESIDENTIAL_BOOKS; b++) {
+		m_owned |= 1 << b;
 		uint8_t n = c_books[b].entries;
-		if (b == BOOK_COUNT - 1) {
+		if (b == RESIDENTIAL_BOOKS - 1) {
 			n = n > leave ? n - leave : 0;
 		}
 		for (uint8_t i = 0; i < n; i++) {
