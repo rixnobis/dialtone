@@ -70,7 +70,9 @@ its parts) and Books. A tab with something you can afford right now carries an a
 see that books are for sale. The Books tab lists each book for sale on its own row; the one under
 the cursor shows only how many numbers it has and "up to N% duds". Its pick-up chance and what a
 call and a sale pay you find out by dialing. A category's first book is handed to you. Finishing books puts more
-of them up for sale, so after Elm Street you choose between two.
+of them up for sale, so after Elm Street you choose between two. If every number in the books you own has been called and
+you cannot afford the cheapest book for sale, nothing could ever pay for it, so the corp hands that book
+over free with a line on its message row.
 
 | Book | Numbers | Duds | Pick-up | Fee | Bonus | Price | For sale after |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -97,7 +99,7 @@ line busy the keypad gets "every line is busy".
 
 ## The autodialer starts out bad, on purpose
 
-$25 in supplies. It sits on the desk in its own box with a red readout, like an alarm clock: the top
+$25 in supplies, once you own a second line (with one line it has nothing to dial on, and the Autodialer tab says `needs a 2nd line`). It sits on the desk in its own box with a red readout, like an alarm clock: the top
 row is the number it is dialing, digit by digit (`READY` between calls, `NO LIST` with nothing to
 dial), the bottom row is `L` calls going / calls it may run, and `Q` how many numbers are on its
 list. Its lamp blinks while it has a call going. The phone's keypad lights only for your own
@@ -166,7 +168,7 @@ promotion.
 
 In the office, X on the promotion shows what it pays and what it takes: you get standing, a point
 for every 10 calls and every 2 sales of this run, and you lose your cash, your books, your lines and
-the autodialer. X accepts, O turns it down for now. Then the perks: standing buys them for good,
+the autodialer; the screen itself only says `Standing: +N`. X accepts, O turns it down for now. Then the perks: standing buys them for good,
 and unspent standing stays for the next time.
 
 | Perk | A level does | Levels | Price |

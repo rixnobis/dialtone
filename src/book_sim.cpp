@@ -772,6 +772,8 @@ bool BookSim::ShopLocked(uint8_t item) const {
 	return item == 1 && m_autoLevel >= AUTO_RESIDENTIAL_MAX && m_autoLevel < AUTO_MAX && m_promotions == 0;
 }
 
+bool BookSim::ShopNeedsLine(uint8_t item) const { return item == 1 && m_autoLevel == 0 && m_lineCount < 2; }
+
 uint32_t BookSim::ShopPrice(uint8_t item) const {
 	switch (item) {
 		case 0:
@@ -795,7 +797,7 @@ uint32_t BookSim::ShopPrice(uint8_t item) const {
 
 bool BookSim::Buy(uint8_t item) {
 	uint32_t price = ShopPrice(item);
-	if (price == 0 || m_cash < price || ShopLocked(item)) {
+	if (price == 0 || m_cash < price || ShopLocked(item) || ShopNeedsLine(item)) {
 		return false;
 	}
 	m_cash -= price;
@@ -871,6 +873,38 @@ bool BookSim::BuyPerk(uint8_t perk) {
 	return true;
 }
 
+// every owned number called, nothing in flight and too little cash for the cheapest book on sale: nobody
+// could ever pay for the next book, so the corp hands the cheapest one over
+void BookSim::CheckRescue(void) {
+	if (m_supRinging || LinesBusy() || AutoActive()) {
+		return;
+	}
+	for (uint8_t b = 0; b < BOOK_COUNT; b++) {
+		if (Owned(b) && !BookDone(b)) {
+			return;
+		}
+	}
+	uint8_t books[BOOK_COUNT];
+	uint8_t count = ForSaleList(books);
+	if (!count) {
+		return;
+	}
+	uint8_t cheapest = books[0];
+	for (uint8_t i = 1; i < count; i++) {
+		if (c_books[books[i]].price < c_books[cheapest].price) {
+			cheapest = books[i];
+		}
+	}
+	if (m_cash >= c_books[cheapest].price) {
+		return;
+	}
+	m_owned |= 1 << cheapest;
+	SetCorp("Take %s. On the house.", c_books[cheapest].name);
+	printf("DIALTONE: corp gave book %d %s cash=%d price=%d\n", cheapest + 1, c_books[cheapest].name, m_cash,
+		   c_books[cheapest].price);
+	m_listener->OnBookGiven(cheapest);
+}
+
 void BookSim::Tick(uint32_t ticks) {
 	while (ticks--) {
 		m_simTick++;
@@ -879,6 +913,9 @@ void BookSim::Tick(uint32_t ticks) {
 		}
 		TickAutodialer();
 		TickSupervisor();
+		if (m_simTick % 60 == 0) {
+			CheckRescue();
+		}
 		// a quiet corp line gets a new line of flavour now and then
 		if (++m_corpIdle >= 25 * 60 && !m_supRinging) {
 			SetCorp("%s", c_corpIdle[m_rand->rand(sizeof(c_corpIdle) / sizeof(c_corpIdle[0]))]);
@@ -1012,6 +1049,14 @@ void BookSim::Load(const BookSave& in) {
 	CheckNote();
 	printf("DIALTONE: books loaded seed=%08x cash=%d calls=%d owned=%02x done=%d note=%d category=%d standing=%d\n",
 		   m_seed, m_cash, m_calls, m_owned, BooksDoneIn(m_category), m_noteState, m_category, m_standing);
+}
+
+void BookSim::DebugFirstDone(void) {
+	for (uint8_t i = 0; i < c_books[0].entries; i++) {
+		m_status[0][i] = uint8_t(m_duds[0][i] ? Entry::Dud : Entry::NoAnswer);
+		m_calls++;
+	}
+	printf("DIALTONE: first book called to the end\n");
 }
 
 void BookSim::DebugPredial(uint8_t leave) {

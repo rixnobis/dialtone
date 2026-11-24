@@ -185,6 +185,11 @@ void BookScene::start(StartReason reason) {
 		m_sim.DebugCash(DIALTONE_START_CASH);
 	}
 #endif
+#ifdef DIALTONE_FIRSTDONE
+	if (status != SaveSlot::Status::Loaded) {
+		m_sim.DebugFirstDone();
+	}
+#endif
 #ifdef DIALTONE_PREDIAL
 	// test builds: every residential book yours, every number but the last DIALTONE_PREDIAL called
 	if (status != SaveSlot::Status::Loaded) {
@@ -338,7 +343,8 @@ bool BookScene::ShopCategoryAffordable(uint8_t cat) const {
 	uint8_t first = cat == 0 ? 0 : 1, last = cat == 0 ? 1 : BookSim::SHOP_ENTRIES;
 	for (uint8_t i = first; i < last; i++) {
 		uint32_t price = m_sim.ShopPrice(i);
-		if (price && !(i >= 2 && !m_sim.HasAutodialer()) && !m_sim.ShopLocked(i) && m_sim.Cash() >= price) {
+		if (price && !(i >= 2 && !m_sim.HasAutodialer()) && !m_sim.ShopLocked(i) && !m_sim.ShopNeedsLine(i) &&
+			m_sim.Cash() >= price) {
 			return true;
 		}
 	}
@@ -462,9 +468,7 @@ void BookScene::HandleMenuButton(psyqo::AdvancedPad::Button button) {
 
 void BookScene::AfterPromotion(void) {
 	// a new desk: the lines, the autodialer and the books are gone, whatever was ringing stops
-	m_tones.Line(0, Tones::Cue::None);
-	m_tones.Line(1, Tones::Cue::None);
-	m_toneStop[0] = m_toneStop[1] = 0;
+	StopTones();
 	m_panelBook = m_sim.FirstOwned();
 	m_panelSel = 0;
 	m_panel = m_shop = false;
@@ -575,6 +579,7 @@ void BookScene::HandleButton(psyqo::AdvancedPad::Button button) {
 	if (m_noteScene) {
 		if (m_noteStep >= 6 && (button == Button::Cross || button == Button::Start)) {
 			m_noteScene = false;
+			StopTones();
 			m_sim.NoteSceneOver();
 			ClearOverlay();
 			RequestSave();
@@ -791,6 +796,19 @@ void BookScene::OnBookDone(uint8_t book) {
 	RequestSave();
 }
 
+void BookScene::OnBookGiven(uint8_t book) {
+	char top[40];
+	snprintf(top, sizeof(top), "   The corp sends you %s", BookSim::c_books[book].name);
+	Banner(240, c_amber, top, "   On the house. Start dialing.");
+	m_tones.Win();
+	if (m_sim.BookDone(m_panelBook)) {
+		m_panelBook = book;
+		m_panelSel = 0;
+		ClearPanel();
+	}
+	RequestSave();
+}
+
 void BookScene::OnNote(void) {
 	char number[8], text[10], top[40];
 	m_sim.NoteNumber(number);
@@ -805,7 +823,14 @@ void BookScene::OnNote(void) {
 	RequestSave();
 }
 
+void BookScene::StopTones(void) {
+	m_tones.Line(0, Tones::Cue::None);
+	m_tones.Line(1, Tones::Cue::None);
+	m_toneStop[0] = m_toneStop[1] = 0;
+}
+
 void BookScene::OnNoteAnswered(void) {
+	StopTones();
 	m_noteScene = true;
 	m_noteStep = 1;
 	m_noteTimer = NOTE_LINE_TICKS;
@@ -1011,6 +1036,8 @@ void BookScene::UpdateShop(void) {
 			SetRow(r++, c_grey, "%c%-17s needs autodialer", cursor, name);
 		} else if (price == 0) {
 			SetRow(r++, c_grey, "%c%-17s all bought", cursor, name);
+		} else if (m_sim.ShopNeedsLine(i)) {
+			SetRow(r++, c_grey, "%c%-17s needs a 2nd line", cursor, name);
 		} else if (m_sim.ShopLocked(i)) {
 			SetRow(r++, c_grey, "%c%-17s after promotion", cursor, name);
 		} else {
@@ -1043,7 +1070,10 @@ void BookScene::UpdateShop(void) {
 			SetRow(r++, c_green, "%d line%s now. One stays yours", m_sim.Lines(), m_sim.Lines() > 1 ? "s" : "");
 			break;
 		case 1:
-			if (!m_sim.HasAutodialer()) {
+			if (m_sim.ShopNeedsLine(1)) {
+				SetRow(r++, c_green, "Dials on a line of its own: buy");
+				SetRow(r++, c_green, "a 2nd line first.");
+			} else if (!m_sim.HasAutodialer()) {
 				SetRow(r++, c_green, "Dials a list you give it. Badly.");
 			} else if (m_sim.AutoLines() < m_sim.AutoLevel()) {
 				SetRow(r++, c_green, "Lv %d runs %d at once: needs lines", m_sim.AutoLevel(), m_sim.AutoLines());
@@ -1132,7 +1162,7 @@ void BookScene::UpdatePromo(void) {
 		SetRow(r++, c_white, again ? "Small business again, a new desk." : "Small business wants you upstairs.");
 		SetRow(r++, c_white, "");
 		SetRow(r++, c_white, "This run: %d calls, %d sales", m_sim.Calls(), m_sim.Connects());
-		SetRow(r++, c_green, "Standing +%d (a call /10, a sale /2)", m_sim.PromotionStanding());
+		SetRow(r++, c_green, "Standing: +%d", m_sim.PromotionStanding());
 		SetRow(r++, c_white, "");
 		SetRow(r++, c_white, "You keep: standing and perks.");
 		SetRow(r++, c_white, "You lose: cash, books, lines and");
@@ -1389,8 +1419,12 @@ void BookScene::frame() {
 				}
 			}
 		}
-		if (m_noteScene && m_noteStep == 6 && m_noteTimer < NOTE_LINE_TICKS - 90) {
-			m_tones.Line(0, Tones::Cue::None);
+		if (m_noteScene && m_noteStep == 6) {
+			// the dead line's fast busy lasts 90 ticks, then the scene is silent
+			m_noteTimer = m_noteTimer > deltaTime ? m_noteTimer - deltaTime : 0;
+			if (m_noteTimer < NOTE_LINE_TICKS - 90) {
+				m_tones.Line(0, Tones::Cue::None);
+			}
 		}
 
 		uint32_t cash = m_sim.Cash();

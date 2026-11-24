@@ -30,6 +30,7 @@ class BookScene final : public psyqo::Scene, public BookListener {
 	void OnSold(uint8_t line) override;
 	void OnSupervisorRing(bool ringing) override;
 	void OnBookDone(uint8_t book) override;
+	void OnBookGiven(uint8_t book) override;
 	void OnNote(void) override;
 	void OnNoteAnswered(void) override;
 
@@ -55,6 +56,7 @@ class BookScene final : public psyqo::Scene, public BookListener {
 	void UpdateNoteScene(void);
 	void ClearOverlay(void);
 	void ClearPanel(void);
+	void StopTones(void);
 	void DrawKeyDigits(void);
 	void DrawReadout(void);
 	void DrawBand(int16_t x, int16_t y, int16_t w, int16_t h, psyqo::Color colour, bool semiTrans = true);

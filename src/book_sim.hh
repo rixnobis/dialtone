@@ -106,6 +106,7 @@ class BookListener {
 	virtual void OnSold(uint8_t line) = 0;
 	virtual void OnSupervisorRing(bool ringing) = 0;
 	virtual void OnBookDone(uint8_t book) = 0;
+	virtual void OnBookGiven(uint8_t book) = 0; // the corp hands you a book you cannot pay for
 	virtual void OnNote(void) = 0;		  // the sticky note turns up
 	virtual void OnNoteAnswered(void) = 0; // the note's number picks up
 };
@@ -146,6 +147,7 @@ class BookSim final {
 	// the shop's fixed items
 	uint32_t ShopPrice(uint8_t item) const; // 0: nothing more to buy there
 	bool ShopLocked(uint8_t item) const;	// the next level needs a promotion
+	bool ShopNeedsLine(uint8_t item) const; // the first autodialer needs a second line to use
 	bool Buy(uint8_t item);
 
 	// books
@@ -220,6 +222,8 @@ class BookSim final {
 	void DebugStanding(uint32_t amount) { m_standing += amount; }
 	// owns every residential book and marks every number called but the last `leave` of the last one
 	void DebugPredial(uint8_t leave);
+	// test builds (DIALTONE_FIRSTDONE): the first book called to the end, nothing else yours, no cash
+	void DebugFirstDone(void);
 
   private:
 	void Generate(void);
@@ -235,6 +239,7 @@ class BookSim final {
 	uint32_t AutomationPrice(uint32_t base) const;
 	void SetCorp(const char* fmt, ...);
 	void CheckNote(void);
+	void CheckRescue(void);
 
 	Rand* m_rand = nullptr;
 	BookListener* m_listener = nullptr;
