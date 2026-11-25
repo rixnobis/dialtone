@@ -111,6 +111,8 @@ class BookListener {
 	virtual void OnNoteAnswered(void) = 0; // the note's number picks up
 	// asked every tick a pick-up is due; true keeps it ringing
 	virtual bool HoldPickUp(uint8_t line) { return false; }
+	// asked every tick a call on the line is about to end; true keeps it Talking (the caller's voice is unfinished)
+	virtual bool HoldTalk(uint8_t line) { return false; }
 };
 
 class BookSim final {

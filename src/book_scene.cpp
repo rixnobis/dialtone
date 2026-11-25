@@ -720,6 +720,17 @@ void BookScene::OnDigit(uint8_t line, char digit) {
 }
 
 void BookScene::OnRing(uint8_t line) {
+	const auto& ringing = m_sim.GetLine(line);
+	if (ringing.byMachine && (ringing.pending == CallOutcome::Sold || ringing.pending == CallOutcome::NoSale ||
+							  ringing.pending == CallOutcome::HungUp)) {
+		// the autodialer's callers are silent, but stay on the line as long as a voiced one would
+		VoiceLines::Kind closing = ringing.pending == CallOutcome::Sold	   ? VoiceLines::SALE
+								   : ringing.pending == CallOutcome::NoSale ? VoiceLines::NOSALE
+																			: VoiceLines::HANGUP;
+		g_voiceLines.RingSilent(line, uint16_t(ringing.book) << 8 | ringing.entry,
+								VoiceLines::Tier(BookSim::c_books[ringing.book].category), closing,
+								m_sim.EntryStatus(ringing.book, ringing.entry) != Entry::Unknown);
+	}
 	if (!Audible(line)) {
 		return;
 	}
@@ -731,8 +742,8 @@ void BookScene::OnRing(uint8_t line) {
 	m_tones.Line(slot, Tones::Cue::RingbackUS);
 	// a call that will pick up: its lines are read off the CD while it rings
 	const auto& call = m_sim.GetLine(line);
-	if (call.pending == CallOutcome::Sold || call.pending == CallOutcome::NoSale ||
-		call.pending == CallOutcome::HungUp) {
+	if (!call.byMachine && (call.pending == CallOutcome::Sold || call.pending == CallOutcome::NoSale ||
+							call.pending == CallOutcome::HungUp)) {
 		VoiceLines::Kind closing = call.pending == CallOutcome::Sold	 ? VoiceLines::SALE
 								   : call.pending == CallOutcome::NoSale ? VoiceLines::NOSALE
 																		 : VoiceLines::HANGUP;
@@ -742,7 +753,13 @@ void BookScene::OnRing(uint8_t line) {
 	}
 }
 
-bool BookScene::HoldPickUp(uint8_t line) { return Audible(line) && g_voiceLines.HoldPickUp(line); }
+bool BookScene::HoldPickUp(uint8_t line) {
+	return !m_sim.GetLine(line).byMachine && g_voiceLines.HoldPickUp(line);
+}
+
+bool BookScene::HoldTalk(uint8_t line) {
+	return m_sim.GetLine(line).byMachine ? g_voiceLines.HoldSilent(line) : g_voiceLines.HoldTalk(line);
+}
 
 void BookScene::OnDead(uint8_t line) {
 	if (!Audible(line)) {
@@ -757,11 +774,16 @@ void BookScene::OnDead(uint8_t line) {
 }
 
 void BookScene::OnHangUp(uint8_t line) {
+	if (m_sim.GetLine(line).byMachine && m_sim.GetLine(line).state == BookLineState::Talking) {
+		g_voiceLines.SilentPickUp(line);
+	}
 	if (!Audible(line)) {
 		return;
 	}
 	const auto& call = m_sim.GetLine(line);
-	if (call.state == BookLineState::Talking) {
+	if (call.byMachine) {
+		// the autodialer's callers are silent
+	} else if (call.state == BookLineState::Talking) {
 		g_voiceLines.PickUp(line);
 	} else if (call.outcome == CallOutcome::NoSale) {
 		g_voiceLines.CallEnded(line);
@@ -782,8 +804,9 @@ void BookScene::OnHangUp(uint8_t line) {
 void BookScene::OnSold(uint8_t line) {
 	OnHangUp(line);
 	const auto& l = m_sim.GetLine(line);
-	if (Audible(line)) {
-		// on your own line the win jingle plays first (about 60 frames), then they say yes
+	if (!l.byMachine) {
+		// a voiced caller already said yes while the call was held, so the win jingle follows it; the wait
+		// only covers a closing line the hold could not start
 		g_voiceLines.CallEnded(line, l.byMachine ? 0 : WIN_JINGLE_FRAMES);
 	}
 	char top[40], bottom[40];

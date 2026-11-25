@@ -49,6 +49,8 @@ class VoiceLines final {
 	static constexpr uint8_t SPU_VOICE = 16; // slot n plays on SPU_VOICE + n
 	// the longest a pick-up waits for its read before a resident line covers for it, in frames
 	static constexpr uint16_t MAX_HOLD = 240;
+	// the longest a call is held for its voice to finish, in sim ticks (10 s)
+	static constexpr uint16_t TALK_HOLD_MAX = 600;
 
 	psyqo::Coroutine<> Load(void);
 	bool Ready(void) const { return m_lineCount != 0 || m_residentCount != 0; }
@@ -63,6 +65,16 @@ class VoiceLines final {
 	bool HoldPickUp(uint8_t simLine);
 	// they picked up / the call is over; a listener who spoke gets their closing line
 	void PickUp(uint8_t simLine);
+	// the sim asks whether a call on simLine that is about to end should stay up: true while the caller's
+	// greeting plays, through CLOSE_GAP_FRAMES of silence after it, and while the closing line (started
+	// here) plays, up to TALK_HOLD_MAX ticks
+	bool HoldTalk(uint8_t simLine);
+	// the autodialer's calls play no voice. RingSilent picks the takes a voiced call would have, only to
+	// learn their lengths; SilentPickUp starts the clock when they pick up; HoldSilent keeps the call on
+	// the line until greeting + pause + closing line would have finished (a fixed stand-in without a pack)
+	void RingSilent(uint8_t simLine, uint16_t number, Tier tier, Kind closing, bool again);
+	void SilentPickUp(uint8_t simLine);
+	bool HoldSilent(uint8_t simLine);
 	// wait: frames to hold the closing line back (a sale on your line waits for the win jingle)
 	void CallEnded(uint8_t simLine, uint16_t wait = 0);
 	void Supervisor(Kind kind);
@@ -85,6 +97,8 @@ class VoiceLines final {
 		int16_t resident[2] = {-1, -1};	   // resident lines standing in, if the read was late
 		bool fellBack = false;
 		bool spoke = false;				   // the opening line played
+		bool closeStarted = false;		   // the closing line was started by HoldTalk
+		uint16_t talkHeld = 0;			   // ticks the call has been held for its voice
 	};
 	struct Job {
 		uint8_t slot, part, gen;
@@ -103,6 +117,7 @@ class VoiceLines final {
 	void PlayPart(uint8_t slot, uint8_t part);
 	void PlayResident(uint8_t slot, int16_t index, uint16_t volume);
 	void PlayClose(uint8_t slot, int8_t which);
+	int8_t ClosingFor(const Plan& plan) const;
 	void PlayAt(uint8_t slot, uint32_t addr, uint32_t bytes, uint16_t volume);
 	Plan* PlanFor(uint8_t simLine);
 
@@ -122,6 +137,13 @@ class VoiceLines final {
 	uint16_t m_closeWait[SLOTS] = {0, 0};
 	uint16_t m_quiet[SLOTS] = {0, 0}; // frames since each slot last finished a line
 	static constexpr uint16_t CLOSE_GAP_FRAMES = 150; // 2.5 s between greeting and answer
+	struct Silent {
+		bool active = false, started = false;
+		uint16_t total = 0;	  // frames the call lasts from pick-up
+		uint32_t start = 0;	  // m_frame at pick-up
+	};
+	Silent m_silent[10];
+	static constexpr uint16_t SILENT_FALLBACK_FRAMES = 480; // greeting + pause + closing, a typical voiced call
 	uint8_t m_gen[SLOTS] = {0, 0};
 	Job m_jobs[4];
 	uint8_t m_jobCount = 0;

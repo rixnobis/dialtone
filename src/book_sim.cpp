@@ -557,6 +557,10 @@ void BookSim::TickLine(uint8_t index) {
 			}
 			break;
 		case BookLineState::Talking:
+			// the call stays on the line while the caller's voice is unfinished
+			if (line.timer == 1 && m_listener->HoldTalk(index)) {
+				break;
+			}
 			if (--line.timer == 0) {
 				EndCall(index, line.pending);
 			}

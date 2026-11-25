@@ -389,20 +389,119 @@ void VoiceLines::PickUp(uint8_t simLine) {
 	}
 }
 
+int8_t VoiceLines::ClosingFor(const Plan& plan) const {
+	if (plan.spoke && plan.closing != HANGUP) {
+		if (plan.part[1] == Part::Ready) {
+			return 0;
+		}
+		if (plan.fellBack && plan.resident[1] >= 0) {
+			return 1;
+		}
+	}
+	return -1;
+}
+
+bool VoiceLines::HoldTalk(uint8_t simLine) {
+	Plan* plan = PlanFor(simLine);
+	if (!plan || !plan->spoke) {
+		return false;
+	}
+	uint8_t slot = plan - m_plans;
+	if (++plan->talkHeld > TALK_HOLD_MAX) {
+		printf("DIALTONE: voice talk hold gave up slot=%d held=%d\n", slot, plan->talkHeld);
+		return false;
+	}
+	bool hold;
+	if (plan->closing == HANGUP || plan->closeStarted) {
+		hold = m_playing[slot] != 0;
+	} else if (m_playing[slot] || m_quiet[slot] < CLOSE_GAP_FRAMES) {
+		hold = true; // the greeting, then the pause the pitch gets
+	} else {
+		int8_t close = ClosingFor(*plan);
+		if (close < 0) {
+			return false;
+		}
+		PlayClose(slot, close);
+		plan->closeStarted = true;
+		hold = true;
+	}
+	if (plan->talkHeld == 1 && hold) {
+		printf("DIALTONE: voice talk hold slot=%d line=%d\n", slot, simLine);
+	}
+	if (!hold) {
+		printf("DIALTONE: voice talk hold over slot=%d held=%d\n", slot, plan->talkHeld);
+	}
+	return hold;
+}
+
+void VoiceLines::RingSilent(uint8_t simLine, uint16_t number, Tier tier, Kind closing, bool again) {
+	if (simLine >= sizeof(m_silent) / sizeof(m_silent[0]) || !Ready()) {
+		return;
+	}
+	Silent& s = m_silent[simLine];
+	s = Silent();
+	s.active = true;
+	s.total = SILENT_FALLBACK_FRAMES;
+	int8_t voice = m_lineCount ? PickVoice(tier, number, false) : int8_t(-1);
+	if (voice >= 0) {
+		auto has = [&](Kind k) { return Read16(m_groups + (voice * m_kindCount + k) * GROUP_ROW + 2) != 0; };
+		Kind opening = closing == HANGUP ? HANGUP : GREET;
+		if (again && has(CALLBACK) && Rand(2) == 0) {
+			opening = CALLBACK;
+		} else if (closing != HANGUP && has(ODD) && Rand(6) == 0) {
+			opening = ODD;
+		}
+		auto frames = [&](int16_t line) -> int32_t {
+			if (line < 0) {
+				return -1;
+			}
+			const uint8_t* l = m_lines + line * LINE_ROW;
+			uint16_t take = Read16(l) + Rand(l[2]);
+			return (uint32_t(Read16(m_takes + take * TAKE_ROW + 4)) * 28 * 60 + m_rate - 1) / m_rate + 2;
+		};
+		int32_t open = frames(PickLine(voice, opening));
+		int32_t close = closing == HANGUP ? 0 : frames(PickLine(voice, closing));
+		if (open >= 0 && close >= 0) {
+			s.total = open + (closing == HANGUP ? 0 : CLOSE_GAP_FRAMES + close);
+		}
+	}
+	printf("DIALTONE: voice silent line=%d number=%d total=%d\n", simLine, number, s.total);
+}
+
+void VoiceLines::SilentPickUp(uint8_t simLine) {
+	if (simLine < sizeof(m_silent) / sizeof(m_silent[0]) && m_silent[simLine].active) {
+		m_silent[simLine].started = true;
+		m_silent[simLine].start = m_frame;
+	}
+}
+
+bool VoiceLines::HoldSilent(uint8_t simLine) {
+	if (simLine >= sizeof(m_silent) / sizeof(m_silent[0])) {
+		return false;
+	}
+	Silent& s = m_silent[simLine];
+	if (!s.active || !s.started) {
+		return false;
+	}
+	if (m_frame - s.start < s.total) {
+		return true;
+	}
+	printf("DIALTONE: voice silent hold over line=%d frames=%d\n", simLine, int(m_frame - s.start));
+	s = Silent();
+	return false;
+}
+
 void VoiceLines::CallEnded(uint8_t simLine, uint16_t wait) {
 	Plan* plan = PlanFor(simLine);
 	if (!plan) {
 		return;
 	}
 	uint8_t slot = plan - m_plans;
-	int8_t close = -1;
-	if (plan->spoke && plan->closing != HANGUP) {
-		if (plan->part[1] == Part::Ready) {
-			close = 0;
-		} else if (plan->fellBack && plan->resident[1] >= 0) {
-			close = 1;
-		}
+	if (plan->closeStarted) {
+		plan->simLine = -1; // its closing line already played during the call
+		return;
 	}
+	int8_t close = ClosingFor(*plan);
 	if (close >= 0) {
 		// a caller's answer follows their greeting after a pause, as if they had listened to the pitch:
 		// at least CLOSE_GAP_FRAMES of silence after the greeting ends, longer if the caller asks for it
