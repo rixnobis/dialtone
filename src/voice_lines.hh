@@ -63,7 +63,8 @@ class VoiceLines final {
 	bool HoldPickUp(uint8_t simLine);
 	// they picked up / the call is over; a listener who spoke gets their closing line
 	void PickUp(uint8_t simLine);
-	void CallEnded(uint8_t simLine);
+	// wait: frames to hold the closing line back (a sale on your line waits for the win jingle)
+	void CallEnded(uint8_t simLine, uint16_t wait = 0);
 	void Supervisor(Kind kind);
 	void Stop(void);
 	void Tick(uint32_t frames);
@@ -118,6 +119,7 @@ class VoiceLines final {
 	Plan m_plans[SLOTS];
 	uint16_t m_playing[SLOTS] = {0, 0}; // frames left of the line each slot is playing
 	int8_t m_pendingClose[SLOTS] = {-1, -1};
+	uint16_t m_closeWait[SLOTS] = {0, 0};
 	uint8_t m_gen[SLOTS] = {0, 0};
 	Job m_jobs[4];
 	uint8_t m_jobCount = 0;

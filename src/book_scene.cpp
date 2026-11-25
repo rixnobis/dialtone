@@ -13,6 +13,7 @@
 using namespace psyqo::fixed_point_literals;
 using namespace psyqo::trig_literals;
 
+static constexpr uint16_t WIN_JINGLE_FRAMES = 66;
 static constexpr psyqo::Color c_bg = {.r = 12, .g = 10, .b = 18};
 static constexpr psyqo::Color c_white = {.r = 255, .g = 255, .b = 255};
 static constexpr psyqo::Color c_grey = {.r = 150, .g = 150, .b = 150};
@@ -780,10 +781,11 @@ void BookScene::OnHangUp(uint8_t line) {
 
 void BookScene::OnSold(uint8_t line) {
 	OnHangUp(line);
-	if (Audible(line)) {
-		g_voiceLines.CallEnded(line);
-	}
 	const auto& l = m_sim.GetLine(line);
+	if (Audible(line)) {
+		// on your own line the win jingle plays first (about 60 frames), then they say yes
+		g_voiceLines.CallEnded(line, l.byMachine ? 0 : WIN_JINGLE_FRAMES);
+	}
 	char top[40], bottom[40];
 	snprintf(bottom, sizeof(bottom), "        they bought it: +$%d", l.paid);
 	if (l.byMachine) {

@@ -389,7 +389,7 @@ void VoiceLines::PickUp(uint8_t simLine) {
 	}
 }
 
-void VoiceLines::CallEnded(uint8_t simLine) {
+void VoiceLines::CallEnded(uint8_t simLine, uint16_t wait) {
 	Plan* plan = PlanFor(simLine);
 	if (!plan) {
 		return;
@@ -404,8 +404,9 @@ void VoiceLines::CallEnded(uint8_t simLine) {
 		}
 	}
 	if (close >= 0) {
-		if (m_playing[slot]) {
+		if (m_playing[slot] || wait) {
 			m_pendingClose[slot] = close;
+			m_closeWait[slot] = wait;
 		} else {
 			PlayClose(slot, close);
 		}
@@ -465,11 +466,15 @@ void VoiceLines::Tick(uint32_t frames) {
 		}
 	}
 	for (uint8_t s = 0; s < SLOTS; s++) {
-		if (!m_playing[s]) {
-			continue;
+		if (m_playing[s]) {
+			m_playing[s] = m_playing[s] > frames ? m_playing[s] - frames : 0;
 		}
-		m_playing[s] = m_playing[s] > frames ? m_playing[s] - frames : 0;
 		if (!m_playing[s] && m_pendingClose[s] >= 0) {
+			if (m_closeWait[s] > frames) {
+				m_closeWait[s] -= frames;
+				continue;
+			}
+			m_closeWait[s] = 0;
 			int8_t which = m_pendingClose[s];
 			m_pendingClose[s] = -1;
 			PlayClose(s, which);

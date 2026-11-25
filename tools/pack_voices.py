@@ -59,6 +59,9 @@ def read_vag(rel):
 
 
 m = load_manifest()
+retired = {v["id"] for v in m["voices"] if v.get("retired")}  # kept in the assets for their history only
+m["voices"] = [v for v in m["voices"] if v["id"] not in retired]
+m["lines"] = [l for l in m["lines"] if l["voice"] not in retired]
 voices = [v["id"] for v in m["voices"]]
 tier_of = {v["id"]: TIERS.index(v["tier"]) for v in m["voices"]}
 assert len(voices) <= 255
