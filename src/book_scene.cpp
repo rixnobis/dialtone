@@ -727,8 +727,21 @@ void BookScene::OnRing(uint8_t line) {
 		return;
 	}
 	m_toneStop[slot] = 0;
-	m_tones.Line(slot, Tones::Cue::Ringback);
+	m_tones.Line(slot, Tones::Cue::RingbackUS);
+	// a call that will pick up: its lines are read off the CD while it rings
+	const auto& call = m_sim.GetLine(line);
+	if (call.pending == CallOutcome::Sold || call.pending == CallOutcome::NoSale ||
+		call.pending == CallOutcome::HungUp) {
+		VoiceLines::Kind closing = call.pending == CallOutcome::Sold	 ? VoiceLines::SALE
+								   : call.pending == CallOutcome::NoSale ? VoiceLines::NOSALE
+																		 : VoiceLines::HANGUP;
+		bool again = m_sim.EntryStatus(call.book, call.entry) != Entry::Unknown;
+		g_voiceLines.Ring(slot, line, uint16_t(call.book) << 8 | call.entry,
+						  VoiceLines::Tier(BookSim::c_books[call.book].category), closing, again);
+	}
 }
+
+bool BookScene::HoldPickUp(uint8_t line) { return Audible(line) && g_voiceLines.HoldPickUp(line); }
 
 void BookScene::OnDead(uint8_t line) {
 	if (!Audible(line)) {
@@ -748,11 +761,9 @@ void BookScene::OnHangUp(uint8_t line) {
 	}
 	const auto& call = m_sim.GetLine(line);
 	if (call.state == BookLineState::Talking) {
-		g_voiceLines.PickUp(line, call.pending == CallOutcome::Sold     ? VoiceLines::SALE
-								   : call.pending == CallOutcome::NoSale ? VoiceLines::NOSALE
-																   : VoiceLines::HANGUP);
+		g_voiceLines.PickUp(line);
 	} else if (call.outcome == CallOutcome::NoSale) {
-		g_voiceLines.CallEnded(line, false);
+		g_voiceLines.CallEnded(line);
 	}
 	uint8_t slot = m_sim.GetLine(line).byMachine ? 1 : 0;
 	if (slot == 1 && m_sim.SupervisorRinging()) {
@@ -770,7 +781,7 @@ void BookScene::OnHangUp(uint8_t line) {
 void BookScene::OnSold(uint8_t line) {
 	OnHangUp(line);
 	if (Audible(line)) {
-		g_voiceLines.CallEnded(line, true);
+		g_voiceLines.CallEnded(line);
 	}
 	const auto& l = m_sim.GetLine(line);
 	char top[40], bottom[40];
@@ -1403,7 +1414,7 @@ void BookScene::frame() {
 	m_flashTimer += deltaTime;
 	TickClock();
 	g_voiceLines.Tick(deltaTime);
-	m_musak.Duck(g_voiceLines.Live());
+	m_musak.Duck(g_voiceLines.Live() || m_tones.Ringing());
 	m_musak.Tick(deltaTime);
 	bool paused = m_intro || m_menu || m_promo;
 	if (!paused) {

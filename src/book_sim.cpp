@@ -27,10 +27,13 @@ const char* const BookSim::c_perkNames[PERK_COUNT] = {"Fast talker", "Warm voice
 // all in vsync ticks
 static constexpr uint16_t CONNECT_TICKS = 24;
 static constexpr uint16_t DEAD_TICKS = 20;
-static constexpr uint16_t NO_ANSWER_TICKS = 330;
+// two rings of a US ringback (2 s on, 4 s off), giving up as the second one ends
+static constexpr uint16_t NO_ANSWER_TICKS = 480;
 static constexpr uint16_t PITCH_TICKS = 240;	 // a sale: the whole pitch, shorter with Fast talker
 static constexpr uint16_t NO_SALE_TICKS = 150; // they listen a while, then "no thanks"
 static constexpr uint16_t HANG_UP_TALK_TICKS = 40;
+// a pick-up comes after the first ring (2 s of a US ringback) and before the second
+static constexpr uint16_t PICKUP_MIN_TICKS = 130;
 static constexpr uint16_t NOTE_RING_TICKS = 150;
 static constexpr uint16_t FIRST_SUPERVISOR_TICKS = 60 * 60;
 static constexpr uint16_t AUTO_STAGGER_TICKS = 30; // between two of the autodialer's calls starting
@@ -414,10 +417,10 @@ void BookSim::StartCall(uint8_t index) {
 	// somebody who already bought hangs up on you; of the ones who listen, about a third buy
 	if (!sold && m_rand->rand(100) < PickupPercent(line.book)) {
 		line.pending = m_rand->rand(100) < c_books[line.book].salePercent ? CallOutcome::Sold : CallOutcome::NoSale;
-		line.timer = 60 + m_rand->rand(91);
+		line.timer = PICKUP_MIN_TICKS + m_rand->rand(91);
 	} else if (sold || m_rand->rand(2)) {
 		line.pending = CallOutcome::HungUp;
-		line.timer = 60 + m_rand->rand(91);
+		line.timer = PICKUP_MIN_TICKS + m_rand->rand(91);
 	} else {
 		line.pending = CallOutcome::NoAnswer;
 		line.timer = NO_ANSWER_TICKS;
@@ -519,6 +522,13 @@ void BookSim::TickLine(uint8_t index) {
 			}
 			break;
 		case BookLineState::Ringing:
+			// the scene can keep a pick-up ringing while the caller's voice line loads
+			if (line.timer == 1 &&
+				(line.pending == CallOutcome::Sold || line.pending == CallOutcome::NoSale ||
+				 line.pending == CallOutcome::HungUp) &&
+				m_listener->HoldPickUp(index)) {
+				break;
+			}
 			if (--line.timer) {
 				break;
 			}

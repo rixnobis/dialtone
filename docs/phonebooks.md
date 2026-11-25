@@ -46,10 +46,11 @@ happens:
 | not in service | the book's dud chance, fixed per number | a moment | nothing | `dud` |
 | they listen and buy | about a third of the pick-ups | the whole pitch, 4 s | fee + bonus | `SALE` |
 | they listen, then "no thanks" | the other two thirds | 2.5 s | fee | `no sale` |
-| no answer (rings 5.5 s) | half of the rest | 5.5 s | fee | `n/a` |
+| no answer (two rings, 8 s) | half of the rest | 8 s | fee | `n/a` |
 | hello, not interested, click | the other half | under a second | fee | `hung` |
 
-While somebody is listening you cannot tell a sale from a waste of time: the handset row says
+A phone that picks up does so after the first ring (2.2 to 3.7 s), a little later if the caller's
+voice is still loading off the CD. While somebody is listening you cannot tell a sale from a waste of time: the handset row says
 "they're listening..." either way. A dud answers with the fast busy tone, which stops after a
 second and a half or as soon as you dial the next digit. A dud stays a dud. Somebody who already
 bought hangs up on you every time after, so a `SALE` number only pays the fee again; a `no sale`

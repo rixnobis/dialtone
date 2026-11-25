@@ -73,6 +73,15 @@ void Tones::Line(uint8_t line, Cue cue) {
 	TickLine(line);
 }
 
+bool Tones::Ringing(void) const {
+	for (const auto& v : m_lines) {
+		if (v.cue == Cue::Ringback || v.cue == Cue::RingbackUS || v.cue == Cue::Ring) {
+			return true;
+		}
+	}
+	return false;
+}
+
 void Tones::Win(void) {
 	m_winStep = 0;
 	m_winTimer = 1;
@@ -85,6 +94,9 @@ void Tones::TickLine(uint8_t line) {
 	switch (v.cue) {
 		case Cue::Ringback:
 			lo = 440, hi = 480, on = 70, period = 120;
+			break;
+		case Cue::RingbackUS:
+			lo = 440, hi = 480, on = 120, period = 360;
 			break;
 		case Cue::Busy:
 			lo = 480, hi = 620, on = 25, period = 50;

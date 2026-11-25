@@ -35,6 +35,7 @@ class BookScene final : public psyqo::Scene, public BookListener {
 	void OnBookGiven(uint8_t book) override;
 	void OnNote(void) override;
 	void OnNoteAnswered(void) override;
+	bool HoldPickUp(uint8_t line) override;
 
 	static constexpr uint8_t KEYS = 12;
 	static constexpr uint8_t PANEL_ENTRIES = 6;

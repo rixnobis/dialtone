@@ -7,7 +7,8 @@
 // It sits above everything the engine's SoundManager allocates from the bottom.
 class Tones final {
   public:
-	enum class Cue : uint8_t { None, Digit, Ringback, Busy, Win, Ring };
+	// RingbackUS is the North American cadence, 2 s on and 4 s off; Ringback the short radio one
+	enum class Cue : uint8_t { None, Digit, Ringback, Busy, Win, Ring, RingbackUS };
 
 	void Init(void);
 	void Tick(uint32_t ticks);
@@ -16,6 +17,7 @@ class Tones final {
 	void Digit(char digit);
 	void Line(uint8_t line, Cue cue);
 	void Win(void);
+	bool Ringing(void) const; // a ringback or the corp bell is going on either line
 
   private:
 	struct Voice {

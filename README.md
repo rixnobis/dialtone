@@ -58,8 +58,16 @@ python3 -I tools/pack_voices.py ../dialtone-assets     # writes assets/VOICE/
 ```
 
 For a disc, `python3 -I tools/make_toc.py > toc-full.json` and give `authoring` that file instead
-of `toc.json`. Without `assets/VOICE` everything builds and plays as before, callers silent. All
-the lines sit in sound RAM from boot (about 0x7c000 bytes are set aside for them, at 8000 Hz).
+of `toc.json`. The stream files must stay uncompressed, which needs an `authoring` from pcsx-redux
+ff24ce773 or later (it honours `"compress": false`). Without `assets/VOICE` everything builds and
+plays as before, callers silent.
+
+The bank stays on the CD. When a call starts ringing the game already knows how it will go, so it
+picks the caller's lines then and reads them into one of two slots in sound RAM while the phone
+rings (one slot for your line, one for the autodialer call on its readout). A pick-up waits for
+its read, up to 4 s more of ringing; past that, or when the read failed, one of the short stock
+lines kept in sound RAM from boot answers instead. The supervisor's lines are stock lines too.
+`DIALTONE_STREAM_DELAY=N` in `DEFINES` holds every read back N frames, to watch that happen.
 The office musak needs nothing extra: `tools/make_musak.py` writes `src/musak_data.inc`.
 
 `make_assets.sh` needs Blender (headless is fine) and Python with numpy. The desk lives in
@@ -91,8 +99,10 @@ type on the host.
 - `src/musak.cpp`: the office musak in phone books, a 16-bar bossa loop on SPU voices 8-15 from
   five tiny synthesised instruments (`tools/make_musak.py`), ducked under voices, Triangle in the
   office turns it off.
-- `src/voice_lines.cpp`: the optional caller and supervisor lines: one in two pick-ups speaks,
-  never two at once, never the same line twice running.
-- `src/tones.cpp`: DTMF, ringback, busy and the win jingle, generated on the SPU from a
+- `src/voice_lines.cpp`: the optional caller, supervisor and insider lines, streamed off the CD
+  during the ring (see above); a number always gets the same voice, a number called before may
+  say so, never the same line twice running.
+- `src/tones.cpp`: DTMF, ringback (the North American 2 s on, 4 s off in phone books), busy and
+  the win jingle, generated on the SPU from a
   two-block looping sine (loop start on the first block, end + repeat on the second), no sample
   files.

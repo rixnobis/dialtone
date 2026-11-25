@@ -109,6 +109,8 @@ class BookListener {
 	virtual void OnBookGiven(uint8_t book) = 0; // the corp hands you a book you cannot pay for
 	virtual void OnNote(void) = 0;		  // the sticky note turns up
 	virtual void OnNoteAnswered(void) = 0; // the note's number picks up
+	// asked every tick a pick-up is due; true keeps it ringing
+	virtual bool HoldPickUp(uint8_t line) { return false; }
 };
 
 class BookSim final {
