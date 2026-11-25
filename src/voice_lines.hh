@@ -120,6 +120,8 @@ class VoiceLines final {
 	uint16_t m_playing[SLOTS] = {0, 0}; // frames left of the line each slot is playing
 	int8_t m_pendingClose[SLOTS] = {-1, -1};
 	uint16_t m_closeWait[SLOTS] = {0, 0};
+	uint16_t m_quiet[SLOTS] = {0, 0}; // frames since each slot last finished a line
+	static constexpr uint16_t CLOSE_GAP_FRAMES = 150; // 2.5 s between greeting and answer
 	uint8_t m_gen[SLOTS] = {0, 0};
 	Job m_jobs[4];
 	uint8_t m_jobCount = 0;

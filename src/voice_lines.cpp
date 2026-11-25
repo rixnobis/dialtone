@@ -404,12 +404,12 @@ void VoiceLines::CallEnded(uint8_t simLine, uint16_t wait) {
 		}
 	}
 	if (close >= 0) {
-		if (m_playing[slot] || wait) {
-			m_pendingClose[slot] = close;
-			m_closeWait[slot] = wait;
-		} else {
-			PlayClose(slot, close);
-		}
+		// a caller's answer follows their greeting after a pause, as if they had listened to the pitch:
+		// at least CLOSE_GAP_FRAMES of silence after the greeting ends, longer if the caller asks for it
+		uint16_t gap = m_playing[slot] ? CLOSE_GAP_FRAMES
+						: m_quiet[slot] < CLOSE_GAP_FRAMES ? uint16_t(CLOSE_GAP_FRAMES - m_quiet[slot]) : 0;
+		m_pendingClose[slot] = close;
+		m_closeWait[slot] = wait > gap ? wait : gap;
 	}
 	// the call is done; the slot's audio stays until its next call rings
 	plan->simLine = -1;
@@ -468,6 +468,9 @@ void VoiceLines::Tick(uint32_t frames) {
 	for (uint8_t s = 0; s < SLOTS; s++) {
 		if (m_playing[s]) {
 			m_playing[s] = m_playing[s] > frames ? m_playing[s] - frames : 0;
+			m_quiet[s] = 0;
+		} else if (m_quiet[s] < 0xffff - frames) {
+			m_quiet[s] += frames;
 		}
 		if (!m_playing[s] && m_pendingClose[s] >= 0) {
 			if (m_closeWait[s] > frames) {
